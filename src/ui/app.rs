@@ -467,13 +467,14 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         KeyCode::Char('h') | KeyCode::Char('?') => Action::ShowHelp,
 
+        // Esc cancels selection/log first; with nothing to cancel it quits like 'q'
         KeyCode::Esc => {
             if !state.selected_agents.is_empty() {
                 Action::ClearSelection
             } else if state.show_subagent_log {
                 Action::ToggleSubagentLog
             } else {
-                Action::None
+                Action::Quit
             }
         }
 
