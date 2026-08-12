@@ -52,15 +52,11 @@ impl TmuxClient {
         let panes: Vec<PaneInfo> = stdout
             .lines()
             .filter_map(|line| {
-                // First field is session_attached (0 or 1)
-                let (attached, rest) = line.split_once('\t')?;
-
-                // Only include panes from attached sessions
-                if attached == "1" {
-                    PaneInfo::parse(rest)
-                } else {
-                    None
-                }
+                // First field is session_attached (0 or 1) — kept in the format
+                // for compatibility but not used: detached sessions must be
+                // visible too, since agents keep running in them.
+                let (_attached, rest) = line.split_once('\t')?;
+                PaneInfo::parse(rest)
             })
             .collect();
 
