@@ -1,11 +1,13 @@
 mod claude_code;
 mod codex_cli;
 mod gemini_cli;
+mod grok;
 mod opencode;
 
 pub use claude_code::ClaudeCodeParser;
 pub use codex_cli::CodexCliParser;
 pub use gemini_cli::GeminiCliParser;
+pub use grok::GrokParser;
 pub use opencode::OpenCodeParser;
 
 use crate::agents::{AgentStatus, AgentType, Subagent};
@@ -70,6 +72,7 @@ impl ParserRegistry {
         Self {
             parsers: vec![
                 Box::new(ClaudeCodeParser::new()),
+                Box::new(GrokParser::new()),
                 Box::new(OpenCodeParser::new()),
                 Box::new(CodexCliParser::new()),
                 Box::new(GeminiCliParser::new()),
@@ -149,5 +152,23 @@ mod tests {
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
         };
         assert!(registry.find_parser_for_pane(&child_claude_pane).is_some());
+
+        // Grok via truncated pane command + title branding
+        let grok_pane = PaneInfo {
+            session: "main".to_string(),
+            window: 3,
+            window_name: "grok".to_string(),
+            pane: 0,
+            command: "grok-1.0.3-maco".to_string(),
+            title: "⠹ - Running: Read foo - some task - grok".to_string(),
+            path: "/home/user/project".to_string(),
+            pid: 1237,
+            cmdline: "grok --always-approve".to_string(),
+            child_commands: Vec::new(),
+        };
+        let grok_parser = registry
+            .find_parser_for_pane(&grok_pane)
+            .expect("should detect Grok");
+        assert_eq!(grok_parser.agent_type(), crate::agents::AgentType::Grok);
     }
 }

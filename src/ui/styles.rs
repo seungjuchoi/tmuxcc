@@ -66,6 +66,11 @@ impl Styles {
         Style::default().fg(Color::Magenta)
     }
 
+    pub fn grok() -> Style {
+        // xAI-ish cyan accent
+        Style::default().fg(Color::Cyan)
+    }
+
     pub fn opencode() -> Style {
         Style::default().fg(Color::Blue)
     }

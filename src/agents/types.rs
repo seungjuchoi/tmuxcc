@@ -7,6 +7,7 @@ use super::subagent::Subagent;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentType {
     ClaudeCode,
+    Grok,
     OpenCode,
     CodexCli,
     GeminiCli,
@@ -18,6 +19,7 @@ impl AgentType {
     pub fn display_name(&self) -> &str {
         match self {
             AgentType::ClaudeCode => "Claude Code",
+            AgentType::Grok => "Grok",
             AgentType::OpenCode => "OpenCode",
             AgentType::CodexCli => "Codex CLI",
             AgentType::GeminiCli => "Gemini CLI",
@@ -29,6 +31,7 @@ impl AgentType {
     pub fn short_name(&self) -> &str {
         match self {
             AgentType::ClaudeCode => "Claude",
+            AgentType::Grok => "Grok",
             AgentType::OpenCode => "Open",
             AgentType::CodexCli => "Codex",
             AgentType::GeminiCli => "Gemini",
@@ -321,24 +324,39 @@ impl MonitoredAgent {
     ///
     /// Claude Code keeps a one-line task description in the pane title,
     /// prefixed with a status icon (✳ when idle, ◐◓◑◒ while working).
+    /// Grok titles end with " - grok" and may prefix "Running: " while busy.
     /// Returns None when the title carries no useful summary (e.g. a
     /// shell-style path title).
     pub fn task_summary(&self) -> Option<String> {
-        let cleaned = self
+        let mut cleaned = self
             .title
             .trim_start_matches(|c: char| {
                 matches!(c, '✳' | '✶' | '✻' | '✽' | '·' | '◐' | '◓' | '◑' | '◒')
                     || ('\u{2800}'..='\u{28FF}').contains(&c) // braille spinners
                     || c.is_whitespace()
             })
-            .trim();
+            .trim()
+            .to_string();
+
+        // Grok branding suffix in pane title
+        if let Some(stripped) = cleaned.strip_suffix(" - grok") {
+            cleaned = stripped.trim().to_string();
+        }
+
+        // Strip leading dash/spinner residue and Grok "Running:" prefix
+        cleaned = cleaned
+            .trim_start_matches(|c: char| c == '-' || c.is_whitespace())
+            .to_string();
+        if let Some(stripped) = cleaned.strip_prefix("Running:") {
+            cleaned = stripped.trim().to_string();
+        }
 
         // Path-like titles (default shell titles) are not summaries
         if cleaned.is_empty() || cleaned.starts_with('~') || cleaned.starts_with('/') {
             return None;
         }
 
-        Some(cleaned.to_string())
+        Some(cleaned)
     }
 
     /// Returns the number of active subagents
@@ -363,7 +381,35 @@ mod tests {
     #[test]
     fn test_agent_type_display() {
         assert_eq!(AgentType::ClaudeCode.display_name(), "Claude Code");
+        assert_eq!(AgentType::Grok.display_name(), "Grok");
+        assert_eq!(AgentType::Grok.short_name(), "Grok");
         assert_eq!(AgentType::OpenCode.short_name(), "Open");
+    }
+
+    #[test]
+    fn test_grok_task_summary() {
+        let mut agent = MonitoredAgent::new(
+            "a".to_string(),
+            "main:0.0".to_string(),
+            "main".to_string(),
+            0,
+            "w".to_string(),
+            0,
+            "/tmp".to_string(),
+            AgentType::Grok,
+            1,
+        );
+        agent.title = "⠹ - Running: Read `/foo` - tmuxcc Grok detection - grok".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("Read `/foo` - tmuxcc Grok detection")
+        );
+
+        agent.title = "Recent Downloads Top 15 by Modification … - grok".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("Recent Downloads Top 15 by Modification …")
+        );
     }
 
     #[test]

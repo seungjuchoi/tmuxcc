@@ -2,7 +2,7 @@
 
 **AI Agent Dashboard for tmux** - Monitor and manage multiple AI coding agents from a single terminal interface.
 
-TmuxCC is a TUI (Terminal User Interface) application that provides centralized monitoring and control of AI coding assistants running in tmux panes. It supports Claude Code, OpenCode, Codex CLI, and Gemini CLI.
+TmuxCC is a TUI (Terminal User Interface) application that provides centralized monitoring and control of AI coding assistants running in tmux panes. It supports Claude Code, Grok, OpenCode, Codex CLI, and Gemini CLI.
 
 ---
 
@@ -50,6 +50,7 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 | Agent | Detection Method | Approval Keys |
 |-------|------------------|---------------|
 | **Claude Code** | `claude` command, version numbers, window title with icon | `y` / `n` |
+| **Grok** | `grok` command (e.g. `grok-1.0.3-maco`), title ending with `- grok` | `y` / `n` |
 | **OpenCode** | `opencode` command | `y` / `n` |
 | **Codex CLI** | `codex` command | `y` / `n` |
 | **Gemini CLI** | `gemini` command | `y` / `n` |
@@ -321,6 +322,7 @@ Contributions are welcome! Here's how you can help:
 ## Related Projects
 
 - [Claude Code](https://claude.ai/code) - Anthropic's AI coding assistant
+- [Grok](https://grok.x.ai/) - xAI Grok Build TUI
 - [OpenCode](https://github.com/opencode-ai/opencode) - Open-source AI coding assistant
 - [Codex CLI](https://github.com/openai/codex-cli) - OpenAI's Codex CLI
 - [Gemini CLI](https://github.com/google/gemini-cli) - Google's Gemini CLI

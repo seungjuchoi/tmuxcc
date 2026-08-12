@@ -90,8 +90,9 @@ impl MonitorTask {
                 // Parse status from content
                 let mut status = parser.parse_status(&content);
 
-                // Check pane title for spinner (Claude Code specific)
-                // Spinners like ⠐⠇⠋⠙⠸ in title indicate processing
+                // Check pane title for spinner (Claude Code / Grok / others)
+                // Spinners like ⠐⠇⠋⠙⠸ in title indicate processing.
+                // Grok also prefixes busy titles with "Running:".
                 let title_has_spinner = pane.title.chars().any(|c| {
                     matches!(
                         c,
@@ -120,7 +121,7 @@ impl MonitorTask {
                             | '◑'
                             | '◒'
                     )
-                });
+                }) || pane.title.contains("Running:");
 
                 // If title has spinner, override to Processing
                 if title_has_spinner && matches!(status, AgentStatus::Idle | AgentStatus::Unknown) {

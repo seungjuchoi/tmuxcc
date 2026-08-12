@@ -10,7 +10,7 @@ use tmuxcc::ui::run_app;
 #[command(name = "tmuxcc")]
 #[command(author, version, about, long_about = None)]
 #[command(
-    about = "AI Agent Dashboard for tmux - Claude Code, OpenCode, Codex CLI, Gemini CLI を一元管理"
+    about = "AI Agent Dashboard for tmux - Claude Code, Grok, OpenCode, Codex CLI, Gemini CLI を一元管理"
 )]
 struct Cli {
     /// ポーリング間隔（ミリ秒）
