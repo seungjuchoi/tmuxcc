@@ -191,6 +191,8 @@ pub struct MonitoredAgent {
     pub pane: u32,
     /// Current working directory
     pub path: String,
+    /// Pane title (Claude Code writes a short task summary here)
+    pub title: String,
     /// Type of AI agent
     pub agent_type: AgentType,
     /// Current status
@@ -232,6 +234,7 @@ impl MonitoredAgent {
             window_name,
             pane,
             path,
+            title: String::new(),
             agent_type,
             status: AgentStatus::Unknown,
             subagents: Vec::new(),
@@ -312,6 +315,30 @@ impl MonitoredAgent {
             .collect();
 
         format!("/{}/{}", abbreviated.join("/"), parts.last().unwrap())
+    }
+
+    /// Returns a short task summary extracted from the pane title, if any.
+    ///
+    /// Claude Code keeps a one-line task description in the pane title,
+    /// prefixed with a status icon (✳ when idle, ◐◓◑◒ while working).
+    /// Returns None when the title carries no useful summary (e.g. a
+    /// shell-style path title).
+    pub fn task_summary(&self) -> Option<String> {
+        let cleaned = self
+            .title
+            .trim_start_matches(|c: char| {
+                matches!(c, '✳' | '✶' | '✻' | '✽' | '·' | '◐' | '◓' | '◑' | '◒')
+                    || ('\u{2800}'..='\u{28FF}').contains(&c) // braille spinners
+                    || c.is_whitespace()
+            })
+            .trim();
+
+        // Path-like titles (default shell titles) are not summaries
+        if cleaned.is_empty() || cleaned.starts_with('~') || cleaned.starts_with('/') {
+            return None;
+        }
+
+        Some(cleaned.to_string())
     }
 
     /// Returns the number of active subagents

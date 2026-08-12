@@ -200,7 +200,10 @@ impl AgentTreeWidget {
                         Style::default().fg(Color::DarkGray)
                     };
 
-                    // Main line: number + status + path
+                    // Main line: number + status + task summary (falls back to path)
+                    let summary = agent
+                        .task_summary()
+                        .unwrap_or_else(|| agent.abbreviated_path());
                     let line = Line::from(vec![
                         Span::styled(
                             select_indicator,
@@ -214,11 +217,11 @@ impl AgentTreeWidget {
                         Span::styled(format!("{:>2} ", number), number_style),
                         Span::styled(status_char, status_style),
                         Span::raw(" "),
-                        Span::styled(agent.abbreviated_path(), Style::default().fg(Color::Cyan)),
+                        Span::styled(summary, Style::default().fg(Color::White)),
                     ]);
                     items.push(ListItem::new(line).style(item_style));
 
-                    // Info line: type | status | pid | uptime | context
+                    // Info line: type | status | path | context
                     let mut info_parts = vec![
                         Span::raw("  "),
                         Span::styled(
@@ -229,12 +232,7 @@ impl AgentTreeWidget {
                         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
                         Span::styled(status_text, status_style),
                         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(
-                            format!("pid:{}", agent.pid),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(agent.uptime_str(), Style::default().fg(Color::DarkGray)),
+                        Span::styled(agent.abbreviated_path(), Style::default().fg(Color::Cyan)),
                     ];
 
                     // Context bar if available

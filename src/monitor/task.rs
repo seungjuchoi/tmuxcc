@@ -170,6 +170,7 @@ impl MonitorTask {
                     pane.pid,
                 );
                 agent.status = status;
+                agent.title = pane.title.clone();
                 agent.subagents = subagents;
                 agent.last_content = content;
                 agent.context_remaining = context_remaining;
