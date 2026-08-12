@@ -4,14 +4,16 @@ use ratatui::layout::{Constraint, Direction, Rect};
 pub struct Layout;
 
 impl Layout {
-    /// Creates the main layout with header, content, and footer
-    pub fn main_layout(area: Rect) -> Vec<Rect> {
+    /// Creates the main layout with header, content, and an optional
+    /// footer line (used only for errors / selection count)
+    pub fn main_layout(area: Rect, show_footer: bool) -> Vec<Rect> {
+        let footer_height = if show_footer { 1 } else { 0 };
         ratatui::layout::Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Header
-                Constraint::Min(10),   // Content area
-                Constraint::Length(1), // Footer (1 line, no border)
+                Constraint::Length(3),             // Header
+                Constraint::Min(10),               // Content area
+                Constraint::Length(footer_height), // Footer (errors/selection only)
             ])
             .split(area)
             .to_vec()
