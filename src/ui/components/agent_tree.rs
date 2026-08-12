@@ -221,7 +221,8 @@ impl AgentTreeWidget {
                     ]);
                     items.push(ListItem::new(line).style(item_style));
 
-                    // Info line: type | status | path | context
+                    // Info line: type | status | context
+                    // (no path here — the window name above already shows the folder)
                     let mut info_parts = vec![
                         Span::raw("  "),
                         Span::styled(
@@ -231,8 +232,6 @@ impl AgentTreeWidget {
                         Span::styled(agent.agent_type.short_name(), type_style),
                         Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
                         Span::styled(status_text, status_style),
-                        Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(agent.abbreviated_path(), Style::default().fg(Color::Cyan)),
                     ];
 
                     // Context bar if available
