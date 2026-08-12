@@ -140,6 +140,8 @@ tmuxcc --init-config
 | `j` / `Down` | Next agent |
 | `k` / `Up` | Previous agent |
 | `Tab` | Cycle through agents |
+| `1`-`9` | Jump cursor to agent number |
+| `Enter` | Go to selected pane (closes tmuxcc) |
 
 ### Selection
 
@@ -156,8 +158,6 @@ tmuxcc --init-config
 | `y` / `Y` | Approve pending request(s) |
 | `n` / `N` | Reject pending request(s) |
 | `a` / `A` | Approve ALL pending requests |
-| `1`-`9` | Send numbered choice to agent |
-| `f` / `F` | Focus on selected pane in tmux |
 | `Left` / `Right` | Switch focus (Sidebar / Input) |
 
 ### View

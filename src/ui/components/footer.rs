@@ -15,7 +15,7 @@ pub enum FooterButton {
     Reject,
     ApproveAll,
     ToggleSelect,
-    Focus,
+    Jump,
     Help,
     Quit,
 }
@@ -38,7 +38,7 @@ impl FooterWidget {
             (" N ", FooterButton::Reject),
             (" A ", FooterButton::ApproveAll),
             (" ☐ ", FooterButton::ToggleSelect),
-            (" F ", FooterButton::Focus),
+            (" ⏎ ", FooterButton::Jump),
             (" ? ", FooterButton::Help),
             (" Q ", FooterButton::Quit),
         ];
@@ -110,7 +110,7 @@ impl FooterWidget {
                 Span::styled(" ", sep),
                 Span::styled(" ☐ ", btn_sel),
                 Span::styled(" ", sep),
-                Span::styled(" F ", btn_def),
+                Span::styled(" ⏎ ", btn_def),
                 Span::styled(" ", sep),
                 Span::styled(" ? ", btn_def),
                 Span::styled(" ", sep),

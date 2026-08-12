@@ -93,8 +93,6 @@ pub struct AppState {
     pub show_help: bool,
     /// Whether subagent log is shown
     pub show_subagent_log: bool,
-    /// Whether summary detail (TODOs and Tools) is shown
-    pub show_summary_detail: bool,
     /// Whether the application should quit
     pub should_quit: bool,
     /// Last error message (if any)
@@ -121,7 +119,6 @@ impl AppState {
             cursor_position: 0,
             show_help: false,
             show_subagent_log: false,
-            show_summary_detail: true,
             should_quit: false,
             last_error: None,
             sidebar_width: 35,
@@ -322,11 +319,6 @@ impl AppState {
     /// Toggles subagent log display
     pub fn toggle_subagent_log(&mut self) {
         self.show_subagent_log = !self.show_subagent_log;
-    }
-
-    /// Toggles summary detail (TODOs and Tools) display
-    pub fn toggle_summary_detail(&mut self) {
-        self.show_summary_detail = !self.show_summary_detail;
     }
 
     /// Sets an error message

@@ -190,7 +190,17 @@ impl AgentTreeWidget {
                         Style::default()
                     };
 
-                    // Main line: status + path
+                    // Jump number: 1-9 are reachable via digit keys
+                    let number = *original_idx + 1;
+                    let number_style = if number <= 9 {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+
+                    // Main line: number + status + path
                     let line = Line::from(vec![
                         Span::styled(
                             select_indicator,
@@ -201,6 +211,7 @@ impl AgentTreeWidget {
                             },
                         ),
                         Span::styled(tree_prefix, Style::default().fg(Color::DarkGray)),
+                        Span::styled(format!("{:>2} ", number), number_style),
                         Span::styled(status_char, status_style),
                         Span::raw(" "),
                         Span::styled(agent.abbreviated_path(), Style::default().fg(Color::Cyan)),

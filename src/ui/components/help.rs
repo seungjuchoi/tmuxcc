@@ -41,6 +41,14 @@ impl HelpWidget {
                 Span::styled("  Tab      ", key_style),
                 Span::styled("Next agent (cycle)", desc_style),
             ]),
+            Line::from(vec![
+                Span::styled("  1-9      ", key_style),
+                Span::styled("Jump cursor to agent number", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter    ", key_style),
+                Span::styled("Go to selected pane (closes tmuxcc)", desc_style),
+            ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("Selection", section_style)]),
             Line::from(vec![]),
@@ -72,16 +80,8 @@ impl HelpWidget {
                 Span::styled("Approve all pending requests", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  1-9      ", key_style),
-                Span::styled("Send number choice to agent", desc_style),
-            ]),
-            Line::from(vec![
                 Span::styled("  ← / →    ", key_style),
                 Span::styled("Switch focus (Sidebar / Input)", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  f / F    ", key_style),
-                Span::styled("Focus on selected pane in tmux", desc_style),
             ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("View", section_style)]),
@@ -89,10 +89,6 @@ impl HelpWidget {
             Line::from(vec![
                 Span::styled("  s / S    ", key_style),
                 Span::styled("Toggle subagent log", desc_style),
-            ]),
-            Line::from(vec![
-                Span::styled("  t / T    ", key_style),
-                Span::styled("Toggle TODO/Tools display", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  r        ", key_style),

@@ -113,36 +113,30 @@ async fn run_loop(
             let input_height = InputWidget::calculate_height(state.get_input(), 6);
 
             if state.show_subagent_log {
-                // With subagent log: sidebar | summary+preview+input | subagent_log
+                // With subagent log: sidebar | preview+input | subagent_log
                 let (left, preview, subagent_log) =
                     Layout::content_layout_with_log(main_chunks[1], state.sidebar_width);
                 AgentTreeWidget::render(frame, left, state);
 
-                // Split preview area for summary, preview, and input
+                // Split preview area for preview and input
                 let preview_chunks = ratatui::layout::Layout::default()
                     .direction(ratatui::layout::Direction::Vertical)
                     .constraints([
-                        ratatui::layout::Constraint::Length(15),
                         ratatui::layout::Constraint::Min(5),
                         ratatui::layout::Constraint::Length(input_height + 2),
                     ])
                     .split(preview);
-                PanePreviewWidget::render_summary(frame, preview_chunks[0], state);
-                PanePreviewWidget::render_detailed(frame, preview_chunks[1], state);
-                InputWidget::render(frame, preview_chunks[2], state);
+                PanePreviewWidget::render_detailed(frame, preview_chunks[0], state);
+                InputWidget::render(frame, preview_chunks[1], state);
                 SubagentLogWidget::render(frame, subagent_log, state);
             } else {
-                // Normal: sidebar | summary+preview+input
-                let (left, summary, preview, input_area) = Layout::content_layout_with_input(
+                // Normal: sidebar | preview+input
+                let (left, preview, input_area) = Layout::content_layout_with_input(
                     main_chunks[1],
                     state.sidebar_width,
                     input_height,
-                    state.show_summary_detail,
                 );
                 AgentTreeWidget::render(frame, left, state);
-                if state.show_summary_detail {
-                    PanePreviewWidget::render_summary(frame, summary, state);
-                }
                 PanePreviewWidget::render_detailed(frame, preview, state);
                 InputWidget::render(frame, input_area, state);
             }
@@ -163,6 +157,11 @@ async fn run_loop(
             // Handle monitor updates
             Some(update) = rx.recv() => {
                 state.agents = update.agents;
+                // Keep list order identical to the rendered tree (session/window/pane),
+                // so j/k navigation and the 1-9 jump numbers match what is displayed.
+                state.agents.root_agents.sort_by(|a, b| {
+                    (a.session.as_str(), a.window, a.pane).cmp(&(b.session.as_str(), b.window, b.pane))
+                });
                 // Ensure selected index is valid
                 if state.selected_index >= state.agents.root_agents.len() {
                     state.selected_index = state.agents.root_agents.len().saturating_sub(1);
@@ -184,8 +183,8 @@ async fn run_loop(
                         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
                         let main_chunks = Layout::main_layout(area);
                         let footer_area = main_chunks[2];
-                        let (sidebar, _, _, input_area) = Layout::content_layout_with_input(
-                            main_chunks[1], state.sidebar_width, 3, state.show_summary_detail
+                        let (sidebar, _, input_area) = Layout::content_layout_with_input(
+                            main_chunks[1], state.sidebar_width, 3
                         );
 
                         match mouse.kind {
@@ -234,10 +233,12 @@ async fn run_loop(
                                         FooterButton::ToggleSelect => {
                                             state.toggle_selection();
                                         }
-                                        FooterButton::Focus => {
+                                        FooterButton::Jump => {
                                             if let Some(agent) = state.selected_agent() {
                                                 let target = agent.target.clone();
-                                                let _ = tmux_client.focus_pane(&target);
+                                                if tmux_client.focus_pane(&target).is_ok() {
+                                                    state.should_quit = true;
+                                                }
                                             }
                                         }
                                         FooterButton::Help => {
@@ -359,19 +360,18 @@ async fn run_loop(
                                     }
                                 }
                             }
-                            Action::FocusPane => {
+                            Action::JumpToPane => {
                                 if let Some(agent) = state.selected_agent() {
                                     let target = agent.target.clone();
                                     if let Err(e) = tmux_client.focus_pane(&target) {
-                                        state.set_error(format!("Failed to focus: {}", e));
+                                        state.set_error(format!("Failed to jump: {}", e));
+                                    } else {
+                                        state.should_quit = true;
                                     }
                                 }
                             }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
-                            }
-                            Action::ToggleSummaryDetail => {
-                                state.toggle_summary_detail();
                             }
                             Action::Refresh => {
                                 state.clear_error();
@@ -426,17 +426,6 @@ async fn run_loop(
                                     }
                                 }
                                 // Stay in input mode for consecutive inputs
-                            }
-                            Action::SendNumber(num) => {
-                                if let Some(agent) = state.selected_agent() {
-                                    let target = agent.target.clone();
-                                    let num_str = num.to_string();
-                                    if let Err(e) = tmux_client.send_keys(&target, &num_str) {
-                                        state.set_error(format!("Failed to send number: {}", e));
-                                    } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {
-                                        state.set_error(format!("Failed to send Enter: {}", e));
-                                    }
-                                }
                             }
                             Action::SidebarWider => {
                                 state.sidebar_width = (state.sidebar_width + 5).min(70);
@@ -516,17 +505,16 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('n') | KeyCode::Char('N') => Action::Reject,
         KeyCode::Char('a') | KeyCode::Char('A') => Action::ApproveAll,
 
-        // Number keys for quick choice selection (1-9)
+        // Number keys jump the cursor to the Nth agent in the list (1-based)
         KeyCode::Char(c @ '1'..='9') => {
-            let num = c.to_digit(10).unwrap() as u8;
-            Action::SendNumber(num)
+            let idx = c.to_digit(10).unwrap() as usize - 1;
+            Action::SelectAgent(idx)
         }
 
-        // Focus pane with 'f'
-        KeyCode::Char('f') | KeyCode::Char('F') => Action::FocusPane,
+        // Enter jumps to the selected pane and closes tmuxcc
+        KeyCode::Enter => Action::JumpToPane,
 
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
-        KeyCode::Char('t') | KeyCode::Char('T') => Action::ToggleSummaryDetail,
         KeyCode::Char('r') => Action::Refresh,
 
         // Sidebar resize (only < and >)

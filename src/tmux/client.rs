@@ -136,10 +136,30 @@ impl TmuxClient {
         Ok(())
     }
 
-    /// Focuses on a pane by selecting its window and pane
+    /// Switches the current client to the session containing the target
+    pub fn switch_client(&self, target: &str) -> Result<()> {
+        // Extract session from full target ("session:window.pane")
+        let session_target = target.split(':').next().unwrap_or(target);
+
+        let output = Command::new("tmux")
+            .args(["switch-client", "-t", session_target])
+            .output()
+            .context("Failed to execute tmux switch-client")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("tmux switch-client failed for {}: {}", session_target, stderr);
+        }
+
+        Ok(())
+    }
+
+    /// Focuses on a pane: selects its window/pane, then switches the client
+    /// to its session so cross-session jumps land where expected.
     pub fn focus_pane(&self, target: &str) -> Result<()> {
         self.select_window(target)?;
         self.select_pane(target)?;
+        self.switch_client(target)?;
         Ok(())
     }
 }
