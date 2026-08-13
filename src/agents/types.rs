@@ -11,6 +11,7 @@ pub enum AgentType {
     OpenCode,
     CodexCli,
     GeminiCli,
+    KiroCli,
     Unknown,
 }
 
@@ -23,6 +24,7 @@ impl AgentType {
             AgentType::OpenCode => "OpenCode",
             AgentType::CodexCli => "Codex CLI",
             AgentType::GeminiCli => "Gemini CLI",
+            AgentType::KiroCli => "Kiro CLI",
             AgentType::Unknown => "Unknown",
         }
     }
@@ -35,6 +37,7 @@ impl AgentType {
             AgentType::OpenCode => "Open",
             AgentType::CodexCli => "Codex",
             AgentType::GeminiCli => "Gemini",
+            AgentType::KiroCli => "Kiro",
             AgentType::Unknown => "???",
         }
     }
@@ -353,6 +356,14 @@ impl MonitoredAgent {
 
         // Path-like titles (default shell titles) are not summaries
         if cleaned.is_empty() || cleaned.starts_with('~') || cleaned.starts_with('/') {
+            return None;
+        }
+
+        // Shell titles of the form "<command> <cwd>" (fish writes e.g.
+        // "kr ~/D/C/t/tmuxcc"). Agents that don't set the pane title — Kiro CLI
+        // among them — would otherwise show the shell's title as a task.
+        let tokens: Vec<&str> = cleaned.split_whitespace().collect();
+        if tokens.len() == 2 && (tokens[1].starts_with('~') || tokens[1].starts_with('/')) {
             return None;
         }
 

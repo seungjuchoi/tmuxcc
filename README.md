@@ -2,7 +2,7 @@
 
 **AI Agent Dashboard for tmux** - Monitor and manage multiple AI coding agents from a single terminal interface.
 
-TmuxCC is a TUI (Terminal User Interface) application that provides centralized monitoring and control of AI coding assistants running in tmux panes. It supports Claude Code, Grok, OpenCode, Codex CLI, and Gemini CLI.
+TmuxCC is a TUI (Terminal User Interface) application that provides centralized monitoring and control of AI coding assistants running in tmux panes. It supports Claude Code, Kiro CLI, Grok, OpenCode, Codex CLI, and Gemini CLI.
 
 ---
 
@@ -50,10 +50,30 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 | Agent | Detection Method | Approval Keys |
 |-------|------------------|---------------|
 | **Claude Code** | `claude` command, version numbers, window title with icon | `y` / `n` |
+| **Kiro CLI** | `kiro-cli` / `kiro-cli-chat` process in the pane's process tree | `y` / `n` |
 | **Grok** | `grok` command (e.g. `grok-1.0.3-maco`), title ending with `- grok` | `y` / `n` |
 | **OpenCode** | `opencode` command | `y` / `n` |
 | **Codex CLI** | `codex` command | `y` / `n` |
 | **Gemini CLI** | `gemini` command | `y` / `n` |
+
+#### Kiro CLI notes
+
+Kiro CLI does not write the tmux pane title, so its status is read entirely from
+the pane content:
+
+- **Approval**: the `<Tool> · <detail> requires approval` snackbar, or the
+  approval dropdown options (`Yes, single permission` / `No (Tab to edit)`)
+- **Question**: the question panel, recognised by its `Type a different answer…`
+  option; the choices are listed in the sidebar
+- **Working / Idle**: the input hint line (`Kiro is working …` vs.
+  `ask a question or describe a task`)
+- **Context**: the status bar reports context *used* (`◔ 18%`), which tmuxcc
+  inverts into the remaining percentage it displays
+
+Kiro's shell integration renames the pane shell to `fish (kiro-cli-term)` in
+*every* pane opened from a Kiro terminal, including plain shells and panes
+running other agents. That marker is explicitly ignored, so only panes with a
+real `kiro-cli` process are reported as Kiro agents.
 
 ---
 
@@ -254,6 +274,8 @@ tmuxcc/
 │   ├── parsers/          # Agent output parsers
 │   │   ├── mod.rs        # AgentParser trait
 │   │   ├── claude_code.rs
+│   │   ├── kiro_cli.rs
+│   │   ├── grok.rs
 │   │   ├── opencode.rs
 │   │   ├── codex_cli.rs
 │   │   └── gemini_cli.rs
@@ -322,6 +344,7 @@ Contributions are welcome! Here's how you can help:
 ## Related Projects
 
 - [Claude Code](https://claude.ai/code) - Anthropic's AI coding assistant
+- [Kiro](https://kiro.dev/) - Kiro CLI agentic coding assistant
 - [Grok](https://grok.x.ai/) - xAI Grok Build TUI
 - [OpenCode](https://github.com/opencode-ai/opencode) - Open-source AI coding assistant
 - [Codex CLI](https://github.com/openai/codex-cli) - OpenAI's Codex CLI

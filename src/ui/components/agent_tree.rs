@@ -180,6 +180,7 @@ impl AgentTreeWidget {
                         AgentType::OpenCode => Style::default().fg(Color::Blue),
                         AgentType::CodexCli => Style::default().fg(Color::Green),
                         AgentType::GeminiCli => Style::default().fg(Color::Yellow),
+                        AgentType::KiroCli => Style::default().fg(Color::LightMagenta),
                         AgentType::Unknown => Style::default().fg(Color::DarkGray),
                     };
 

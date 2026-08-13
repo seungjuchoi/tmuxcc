@@ -2,12 +2,14 @@ mod claude_code;
 mod codex_cli;
 mod gemini_cli;
 mod grok;
+mod kiro_cli;
 mod opencode;
 
 pub use claude_code::ClaudeCodeParser;
 pub use codex_cli::CodexCliParser;
 pub use gemini_cli::GeminiCliParser;
 pub use grok::GrokParser;
+pub use kiro_cli::KiroCliParser;
 pub use opencode::OpenCodeParser;
 
 use crate::agents::{AgentStatus, AgentType, Subagent};
@@ -71,6 +73,11 @@ impl ParserRegistry {
     pub fn new() -> Self {
         Self {
             parsers: vec![
+                // Kiro CLI first: it matches on exact executable names, so it
+                // is the least likely to claim a pane that belongs to another
+                // agent (Claude Code, for instance, also matches bare version
+                // numbers).
+                Box::new(KiroCliParser::new()),
                 Box::new(ClaudeCodeParser::new()),
                 Box::new(GrokParser::new()),
                 Box::new(OpenCodeParser::new()),
@@ -170,5 +177,84 @@ mod tests {
             .find_parser_for_pane(&grok_pane)
             .expect("should detect Grok");
         assert_eq!(grok_parser.agent_type(), crate::agents::AgentType::Grok);
+    }
+
+    #[test]
+    fn test_kiro_detection_and_shell_marker() {
+        let registry = ParserRegistry::new();
+
+        // Real Kiro CLI pane: the shell is `fish (kiro-cli-term)` and the agent
+        // sits a few levels below it.
+        let kiro_pane = PaneInfo {
+            session: "main".to_string(),
+            window: 2,
+            window_name: "tmuxcc".to_string(),
+            pane: 1,
+            command: "fish".to_string(),
+            title: "kr ~/D/C/t/tmuxcc".to_string(),
+            path: "/Users/timer/Documents/Code/tz/tmuxcc".to_string(),
+            pid: 21915,
+            cmdline: "fish (kiro-cli-term)".to_string(),
+            child_commands: vec![
+                "/opt/homebrew/Cellar/fish/4.8.1/bin/fish --login".to_string(),
+                "fish".to_string(),
+                "kiro-cli chat --trust-all-tools --v3".to_string(),
+                "kiro-cli".to_string(),
+                "/Users/timer/.local/bin/kiro-cli-chat chat --trust-all-tools --v3".to_string(),
+                "kiro-cli-chat".to_string(),
+            ],
+        };
+        let kiro_parser = registry
+            .find_parser_for_pane(&kiro_pane)
+            .expect("should detect Kiro CLI");
+        assert_eq!(kiro_parser.agent_type(), crate::agents::AgentType::KiroCli);
+
+        // A plain shell opened from a Kiro terminal carries the same marker but
+        // runs no agent.
+        let bare_shell = PaneInfo {
+            session: "lupa".to_string(),
+            window: 1,
+            window_name: "lupa".to_string(),
+            pane: 2,
+            command: "fish".to_string(),
+            title: "~/D/C/t/l/lupa".to_string(),
+            path: "/Users/timer/Documents/Code/tz/lupa".to_string(),
+            pid: 90915,
+            cmdline: "fish (kiro-cli-term)".to_string(),
+            child_commands: vec![
+                "/opt/homebrew/Cellar/fish/4.8.1/bin/fish --login".to_string(),
+                "fish".to_string(),
+            ],
+        };
+        assert!(
+            registry.find_parser_for_pane(&bare_shell).is_none(),
+            "the kiro-cli-term shell marker must not register as an agent"
+        );
+
+        // Claude Code running under a Kiro-integrated shell still resolves to
+        // Claude Code.
+        let claude_under_kiro = PaneInfo {
+            session: "resp".to_string(),
+            window: 1,
+            window_name: "libalgo".to_string(),
+            pane: 1,
+            command: "fish".to_string(),
+            title: "\u{2733} Radar".to_string(),
+            path: "/Users/timer/Documents/Code/tz/libalgo".to_string(),
+            pid: 16576,
+            cmdline: "fish -c reattach-to-user-namespace".to_string(),
+            child_commands: vec![
+                "fish (kiro-cli-term)".to_string(),
+                "claude --dangerously-skip-permissions".to_string(),
+                "claude".to_string(),
+            ],
+        };
+        let claude_parser = registry
+            .find_parser_for_pane(&claude_under_kiro)
+            .expect("should detect Claude Code");
+        assert_eq!(
+            claude_parser.agent_type(),
+            crate::agents::AgentType::ClaudeCode
+        );
     }
 }
