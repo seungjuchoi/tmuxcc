@@ -82,6 +82,11 @@ the pane content:
   `ask a question or describe a task`)
 - **Context**: the status bar reports context *used* (`◔ 18%`), which tmuxcc
   inverts into the remaining percentage it displays
+- **Task summary**: Kiro has no per-turn equivalent of Claude Code's `✳ <task>`
+  pane title. Enable `chat.terminalTitle` (`/settings` → display, off by
+  default) and name the session with `/title <text>`; tmuxcc strips the
+  `kiro: ` prefix. Without a name the title is just the working directory, so
+  the sidebar falls back to the path.
 
 Kiro's shell integration renames the pane shell to `fish (kiro-cli-term)` in
 *every* pane opened from a Kiro terminal, including plain shells and panes

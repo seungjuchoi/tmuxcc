@@ -354,6 +354,13 @@ impl MonitoredAgent {
             cleaned = stripped.trim().to_string();
         }
 
+        // Kiro CLI branding prefix. With `chat.terminalTitle` enabled it writes
+        // "kiro: <session title>", falling back to "kiro: <cwd>" before the
+        // session has a title — the path check below discards that case.
+        if let Some(stripped) = cleaned.strip_prefix("kiro:") {
+            cleaned = stripped.trim().to_string();
+        }
+
         // Path-like titles (default shell titles) are not summaries
         if cleaned.is_empty() || cleaned.starts_with('~') || cleaned.starts_with('/') {
             return None;
@@ -421,6 +428,36 @@ mod tests {
             agent.task_summary().as_deref(),
             Some("Recent Downloads Top 15 by Modification …")
         );
+    }
+
+    #[test]
+    fn test_kiro_task_summary() {
+        let mut agent = MonitoredAgent::new(
+            "a".to_string(),
+            "main:1.1".to_string(),
+            "main".to_string(),
+            1,
+            "tmuxcc".to_string(),
+            1,
+            "/Users/timer/Documents/Code/tz/tmuxcc".to_string(),
+            AgentType::KiroCli,
+            1,
+        );
+
+        // `chat.terminalTitle` on, session titled
+        agent.title = "kiro: tmuxcc Kiro CLI detection".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("tmuxcc Kiro CLI detection")
+        );
+
+        // `chat.terminalTitle` on, session not titled yet -> falls back to cwd
+        agent.title = "kiro: ~/Documents/Code/tz/tmuxcc".to_string();
+        assert_eq!(agent.task_summary(), None);
+
+        // `chat.terminalTitle` off -> fish's "<command> <cwd>" title
+        agent.title = "kr ~/D/C/t/tmuxcc".to_string();
+        assert_eq!(agent.task_summary(), None);
     }
 
     #[test]
