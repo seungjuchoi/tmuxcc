@@ -38,6 +38,8 @@ pub struct ClaudeCodeParser {
 
     // Context remaining pattern
     context_pattern: Regex,
+    // Status-line pattern reporting context *used* (e.g. "ctx:44%")
+    context_used_pattern: Regex,
 }
 
 impl ClaudeCodeParser {
@@ -82,6 +84,9 @@ impl ClaudeCodeParser {
             context_pattern: Regex::new(
                 r"(?i)Context\s+(?:left|remaining).*?(\d+)%"
             ).unwrap(),
+
+            // Context *used* as rendered by status lines (e.g., "ctx:44%")
+            context_used_pattern: Regex::new(r"(?i)\bctx:\s*(\d{1,3})\s*%").unwrap(),
         }
     }
 
@@ -460,10 +465,27 @@ impl AgentParser for ClaudeCodeParser {
     fn parse_context_remaining(&self, content: &str) -> Option<u8> {
         // Look for context percentage in the last portion of content
         let recent = safe_tail(content, 1000);
-        self.context_pattern
+
+        // Claude Code's own warning already reports what is *left*.
+        if let Some(remaining) = self
+            .context_pattern
             .captures(recent)
             .and_then(|cap| cap.get(1))
             .and_then(|m| m.as_str().parse::<u8>().ok())
+        {
+            return Some(remaining);
+        }
+
+        // Custom status lines commonly surface `ctx:NN%` from the status line
+        // hook's `context_window.used_percentage`, i.e. context *used*. Unlike
+        // the warning above, this is present for the whole session.
+        let used = self
+            .context_used_pattern
+            .captures(recent)
+            .and_then(|cap| cap.get(1))
+            .and_then(|m| m.as_str().parse::<u16>().ok())?;
+
+        Some(100u16.saturating_sub(used.min(100)) as u8)
     }
 
     fn approval_keys(&self) -> &str {
@@ -582,6 +604,28 @@ Do you want to allow this action?
             "Expected Idle, got {:?}",
             status
         );
+    }
+
+    #[test]
+    fn test_parse_context_remaining() {
+        let parser = ClaudeCodeParser::new();
+
+        // Claude Code's own warning reports what is left.
+        assert_eq!(
+            parser.parse_context_remaining("Context left until auto-compact: 42%\n"),
+            Some(42)
+        );
+
+        // A status line reporting `ctx:NN%` reports what is *used*.
+        let statusline =
+            "  \\~/Documents/Code/tz/libalgo_npy_viewer master [Fable 5] ctx:44%\n  \u{23F5}\u{23F5} bypass permissions on (shift+tab to cycle)\n";
+        assert_eq!(parser.parse_context_remaining(statusline), Some(56));
+
+        // The explicit "left" reading wins when both are on screen.
+        let both = format!("Context left until auto-compact: 12%\n{}", statusline);
+        assert_eq!(parser.parse_context_remaining(&both), Some(12));
+
+        assert_eq!(parser.parse_context_remaining("no context info here"), None);
     }
 
     #[test]

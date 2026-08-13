@@ -56,6 +56,19 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 | **Codex CLI** | `codex` command | `y` / `n` |
 | **Gemini CLI** | `gemini` command | `y` / `n` |
 
+#### Context percentage
+
+The context bar is shown whenever the agent puts a percentage on screen:
+
+- **Kiro CLI** always does, in its status bar (`◔ 18%` = context *used*)
+- **Claude Code** reports what is *left* only once it nears auto-compact
+  (`Context left until auto-compact: 42%`). For a reading that is present the
+  whole session, have your status line emit `ctx:NN%` from the status line
+  hook's `context_window.used_percentage`
+
+Both *used* readings are inverted into the remaining percentage tmuxcc displays.
+Other agents do not expose a percentage, so their bar stays hidden.
+
 #### Kiro CLI notes
 
 Kiro CLI does not write the tmux pane title, so its status is read entirely from
