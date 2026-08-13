@@ -40,7 +40,7 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 - **Batch Operations**: Select multiple agents and approve/reject all at once
 - **Hierarchical View**: Tree display organized by Session/Window/Pane
 - **Subagent Tracking**: Monitor spawned subagents (Task tool) with their status
-- **Context Awareness**: View remaining context percentage when available
+- **Context Awareness**: View context window usage percentage when available
 - **Pane Preview**: See live content from selected agent's tmux pane
 - **Focus Integration**: Jump directly to any agent's pane in tmux
 - **Customizable**: Configure polling interval, capture lines, and custom agent patterns
@@ -58,15 +58,18 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 
 #### Context percentage
 
-The context bar is shown whenever the agent puts a percentage on screen:
+tmuxcc reports context **used** (`ctx: 44% ████░░░░░░`), matching what the agents
+themselves print, so the bar fills up as headroom runs out. It turns yellow at 50%
+and red at 80%.
+
+The bar is shown whenever the agent puts a percentage on screen:
 
 - **Kiro CLI** always does, in its status bar (`◔ 18%` = context *used*)
 - **Claude Code** reports what is *left* only once it nears auto-compact
-  (`Context left until auto-compact: 42%`). For a reading that is present the
-  whole session, have your status line emit `ctx:NN%` from the status line
-  hook's `context_window.used_percentage`
+  (`Context left until auto-compact: 42%`), which tmuxcc inverts into a used
+  reading. For a reading that is present the whole session, have your status line
+  emit `ctx:NN%` from the status line hook's `context_window.used_percentage`
 
-Both *used* readings are inverted into the remaining percentage tmuxcc displays.
 Other agents do not expose a percentage, so their bar stays hidden.
 
 #### Kiro CLI notes

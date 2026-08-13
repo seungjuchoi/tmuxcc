@@ -36,8 +36,8 @@ pub struct ClaudeCodeParser {
     task_running_pattern: Regex,
     task_complete_pattern: Regex,
 
-    // Context remaining pattern
-    context_pattern: Regex,
+    // Auto-compact warning, which reports context *left*
+    context_left_pattern: Regex,
     // Status-line pattern reporting context *used* (e.g. "ctx:44%")
     context_used_pattern: Regex,
 }
@@ -80,8 +80,8 @@ impl ClaudeCodeParser {
                 r"(?m)[✓✔]\s*(\w+).*?(?:completed|finished|done|returned)"
             ).unwrap(),
 
-            // Context remaining pattern (e.g., "Context left until auto-compact: 42%")
-            context_pattern: Regex::new(
+            // Context *left* pattern (e.g., "Context left until auto-compact: 42%")
+            context_left_pattern: Regex::new(
                 r"(?i)Context\s+(?:left|remaining).*?(\d+)%"
             ).unwrap(),
 
@@ -462,18 +462,19 @@ impl AgentParser for ClaudeCodeParser {
         subagents
     }
 
-    fn parse_context_remaining(&self, content: &str) -> Option<u8> {
+    fn parse_context_used(&self, content: &str) -> Option<u8> {
         // Look for context percentage in the last portion of content
         let recent = safe_tail(content, 1000);
 
-        // Claude Code's own warning already reports what is *left*.
-        if let Some(remaining) = self
-            .context_pattern
+        // Claude Code's auto-compact warning reports what is *left*, so it has
+        // to be inverted into a used reading.
+        if let Some(left) = self
+            .context_left_pattern
             .captures(recent)
             .and_then(|cap| cap.get(1))
-            .and_then(|m| m.as_str().parse::<u8>().ok())
+            .and_then(|m| m.as_str().parse::<u16>().ok())
         {
-            return Some(remaining);
+            return Some(100u16.saturating_sub(left.min(100)) as u8);
         }
 
         // Custom status lines commonly surface `ctx:NN%` from the status line
@@ -485,7 +486,7 @@ impl AgentParser for ClaudeCodeParser {
             .and_then(|cap| cap.get(1))
             .and_then(|m| m.as_str().parse::<u16>().ok())?;
 
-        Some(100u16.saturating_sub(used.min(100)) as u8)
+        Some(used.min(100) as u8)
     }
 
     fn approval_keys(&self) -> &str {
@@ -607,25 +608,25 @@ Do you want to allow this action?
     }
 
     #[test]
-    fn test_parse_context_remaining() {
+    fn test_parse_context_used() {
         let parser = ClaudeCodeParser::new();
 
-        // Claude Code's own warning reports what is left.
+        // Claude Code's own warning reports what is left, so it gets inverted.
         assert_eq!(
-            parser.parse_context_remaining("Context left until auto-compact: 42%\n"),
-            Some(42)
+            parser.parse_context_used("Context left until auto-compact: 42%\n"),
+            Some(58)
         );
 
-        // A status line reporting `ctx:NN%` reports what is *used*.
+        // A status line reporting `ctx:NN%` already reports what is *used*.
         let statusline =
             "  \\~/Documents/Code/tz/libalgo_npy_viewer master [Fable 5] ctx:44%\n  \u{23F5}\u{23F5} bypass permissions on (shift+tab to cycle)\n";
-        assert_eq!(parser.parse_context_remaining(statusline), Some(56));
+        assert_eq!(parser.parse_context_used(statusline), Some(44));
 
         // The explicit "left" reading wins when both are on screen.
         let both = format!("Context left until auto-compact: 12%\n{}", statusline);
-        assert_eq!(parser.parse_context_remaining(&both), Some(12));
+        assert_eq!(parser.parse_context_used(&both), Some(88));
 
-        assert_eq!(parser.parse_context_remaining("no context info here"), None);
+        assert_eq!(parser.parse_context_used("no context info here"), None);
     }
 
     #[test]

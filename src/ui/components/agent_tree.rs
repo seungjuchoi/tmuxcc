@@ -236,14 +236,14 @@ impl AgentTreeWidget {
                         Span::styled(status_text, status_style),
                     ];
 
-                    // Context bar if available
-                    if let Some(ctx) = agent.context_remaining {
-                        let bar_color = if ctx > 50 {
-                            Color::Green
-                        } else if ctx > 20 {
+                    // Context bar if available (percentage of the window *used*)
+                    if let Some(ctx) = agent.context_used {
+                        let bar_color = if ctx >= 80 {
+                            Color::Red
+                        } else if ctx >= 50 {
                             Color::Yellow
                         } else {
-                            Color::Red
+                            Color::Green
                         };
                         info_parts.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
                         info_parts.push(Span::styled(
@@ -442,14 +442,16 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Renders the fraction of the context window consumed, e.g. `ctx: 44% ████░░░░░░`.
+/// The bar fills up as context is spent, so a fuller bar always means less headroom.
 fn context_bar(percent: u8) -> String {
     let total_blocks = 10;
     let filled = (percent as usize * total_blocks) / 100;
     let empty = total_blocks - filled;
     format!(
-        "{}{}│{:>3}%",
+        "ctx:{:>3}% {}{}",
+        percent,
         "█".repeat(filled),
-        "░".repeat(empty),
-        percent
+        "░".repeat(empty)
     )
 }

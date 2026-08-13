@@ -46,8 +46,8 @@ pub trait AgentParser: Send + Sync {
         Vec::new()
     }
 
-    /// Parses context remaining percentage from content (default: None)
-    fn parse_context_remaining(&self, content: &str) -> Option<u8> {
+    /// Parses the percentage of the context window *used* (default: None)
+    fn parse_context_used(&self, content: &str) -> Option<u8> {
         let _ = content;
         None
     }

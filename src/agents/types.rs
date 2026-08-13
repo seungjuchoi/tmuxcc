@@ -213,8 +213,9 @@ pub struct MonitoredAgent {
     pub started_at: Instant,
     /// When the pane content was last updated
     pub last_updated: Instant,
-    /// Context remaining percentage (0-100), if detectable
-    pub context_remaining: Option<u8>,
+    /// Context *used* percentage (0-100), if detectable. Matches what the
+    /// agents themselves report, so no inversion happens anywhere.
+    pub context_used: Option<u8>,
 }
 
 impl MonitoredAgent {
@@ -248,7 +249,7 @@ impl MonitoredAgent {
             pid,
             started_at: now,
             last_updated: now,
-            context_remaining: None,
+            context_used: None,
         }
     }
 

@@ -155,8 +155,8 @@ impl MonitorTask {
                 // Parse subagents
                 let subagents = parser.parse_subagents(&content);
 
-                // Parse context remaining
-                let context_remaining = parser.parse_context_remaining(&content);
+                // Parse context used
+                let context_used = parser.parse_context_used(&content);
 
                 // Create monitored agent
                 let mut agent = MonitoredAgent::new(
@@ -174,7 +174,7 @@ impl MonitorTask {
                 agent.title = pane.title.clone();
                 agent.subagents = subagents;
                 agent.last_content = content;
-                agent.context_remaining = context_remaining;
+                agent.context_used = context_used;
                 agent.touch(); // Update last_updated
 
                 tree.root_agents.push(agent);

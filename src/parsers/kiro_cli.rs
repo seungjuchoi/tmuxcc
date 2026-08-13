@@ -413,9 +413,8 @@ impl AgentParser for KiroCliParser {
         subagents
     }
 
-    fn parse_context_remaining(&self, content: &str) -> Option<u8> {
-        // Kiro's status bar reports context *used* (`◔ 6%`), while tmuxcc
-        // tracks context *remaining*.
+    fn parse_context_used(&self, content: &str) -> Option<u8> {
+        // Kiro's status bar already reports context *used* (`◔ 6%`).
         let tail = tail_lines(content, 20);
         let used = self
             .context_used
@@ -424,7 +423,7 @@ impl AgentParser for KiroCliParser {
             .and_then(|cap| cap.get(1))
             .and_then(|m| m.as_str().parse::<u16>().ok())?;
 
-        Some(100u16.saturating_sub(used.min(100)) as u8)
+        Some(used.min(100) as u8)
     }
 
     fn approval_keys(&self) -> &str {
@@ -622,16 +621,13 @@ mod tests {
     }
 
     #[test]
-    fn test_context_remaining_is_inverted() {
+    fn test_context_used_is_passed_through() {
         let parser = KiroCliParser::new();
-        // Status bar shows 6% *used* -> 94% remaining.
-        assert_eq!(parser.parse_context_remaining(IDLE_PANE), Some(94));
-        assert_eq!(parser.parse_context_remaining(WORKING_PANE), Some(92));
-        assert_eq!(
-            parser.parse_context_remaining("  42% context used\n"),
-            Some(58)
-        );
-        assert_eq!(parser.parse_context_remaining("no status bar here"), None);
+        // Status bar shows 6% used, and that is what tmuxcc reports.
+        assert_eq!(parser.parse_context_used(IDLE_PANE), Some(6));
+        assert_eq!(parser.parse_context_used(WORKING_PANE), Some(8));
+        assert_eq!(parser.parse_context_used("  42% context used\n"), Some(42));
+        assert_eq!(parser.parse_context_used("no status bar here"), None);
     }
 
     #[test]
