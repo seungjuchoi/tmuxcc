@@ -148,7 +148,11 @@ impl TmuxClient {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("tmux switch-client failed for {}: {}", session_target, stderr);
+            anyhow::bail!(
+                "tmux switch-client failed for {}: {}",
+                session_target,
+                stderr
+            );
         }
 
         Ok(())

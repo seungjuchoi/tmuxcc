@@ -127,7 +127,9 @@ impl AgentParser for GrokParser {
             let desc = cap.get(2).map(|m| m.as_str().trim()).unwrap_or("");
 
             let existing = subagents.iter().any(|s| {
-                s.subagent_type.display_name().eq_ignore_ascii_case(type_name)
+                s.subagent_type
+                    .display_name()
+                    .eq_ignore_ascii_case(type_name)
             });
 
             if !existing {
