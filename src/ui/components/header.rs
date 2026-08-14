@@ -1,5 +1,4 @@
 use crate::app::AppState;
-use chrono::Local;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -15,7 +14,6 @@ impl HeaderWidget {
         let total = state.agents.root_agents.len();
         let processing = state.agents.processing_count();
         let pending = state.agents.active_count();
-        let time = Local::now().format("%H:%M").to_string();
 
         let mut spans = vec![
             Span::styled(
@@ -82,13 +80,6 @@ impl HeaderWidget {
                 mem_percent
             ),
             Style::default().fg(mem_color),
-        ));
-
-        // Time
-        spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
-        spans.push(Span::styled(
-            format!(" {} ", time),
-            Style::default().fg(Color::DarkGray),
         ));
 
         let line = Line::from(spans);
