@@ -82,9 +82,9 @@ mod tests {
     #[test]
     fn test_matches() {
         let parser = OpenCodeParser::new();
-        assert!(parser.matches(&["opencode", "", ""]));
-        assert!(parser.matches(&["", "OpenCode", ""]));
-        assert!(!parser.matches(&["claude", "Claude Code", ""]));
+        assert!(parser.matches(&["opencode", ""]));
+        assert!(parser.matches(&["node", "/usr/bin/opencode"]));
+        assert!(!parser.matches(&["claude", "claude"]));
     }
 
     #[test]

@@ -451,7 +451,6 @@ mod tests {
         // Child process of the pane shell
         assert!(parser.matches(&[
             "fish",
-            "kr ~/D/C/t/tmuxcc",
             "fish (kiro-cli-term)",
             "kiro-cli chat --trust-all-tools --v3",
             "kiro-cli",
@@ -459,12 +458,11 @@ mod tests {
         // Wrapper binary with an absolute path
         assert!(parser.matches(&[
             "fish",
-            "",
             "fish (kiro-cli-term)",
             "/Users/timer/.local/bin/kiro-cli-chat chat --v3",
         ]));
         // Run directly as the pane command
-        assert!(parser.matches(&["kiro-cli", "", "kiro-cli chat"]));
+        assert!(parser.matches(&["kiro-cli", "kiro-cli chat"]));
     }
 
     #[test]
@@ -472,17 +470,15 @@ mod tests {
         let parser = KiroCliParser::new();
         // Every pane opened from a Kiro terminal carries this marker, even
         // plain shells — it must not be detected as an agent.
-        assert!(!parser.matches(&["fish", "~/D/C/t/lupa", "fish (kiro-cli-term)"]));
+        assert!(!parser.matches(&["fish", "fish (kiro-cli-term)"]));
         assert!(!parser.matches(&[
             "fish",
-            "~",
             "fish (kiro-cli-term)",
             "/opt/homebrew/Cellar/fish/4.8.1/bin/fish --login",
         ]));
         // ...and neither must a Claude Code pane that happens to sit under one.
         assert!(!parser.matches(&[
             "fish",
-            "\u{2733} some task",
             "fish (kiro-cli-term)",
             "claude --dangerously-skip-permissions",
         ]));
@@ -491,11 +487,20 @@ mod tests {
     #[test]
     fn test_no_match_for_other_agents() {
         let parser = KiroCliParser::new();
-        assert!(!parser.matches(&["claude", "Claude Code", "claude -c"]));
-        assert!(!parser.matches(&["grok-1.0.3-maco", "... - grok", "grok"]));
-        assert!(!parser.matches(&["opencode", "OpenCode", "opencode"]));
+        assert!(!parser.matches(&["claude", "claude -c"]));
+        assert!(!parser.matches(&["grok-1.0.3-maco", "grok"]));
+        assert!(!parser.matches(&["opencode", "opencode"]));
         // A file that merely looks like the binary name
-        assert!(!parser.matches(&["nvim", "", "nvim kiro-cli.md"]));
+        assert!(!parser.matches(&["nvim", "nvim kiro-cli.md"]));
+    }
+
+    /// Kiro writes no branding into the pane title, so it never claims a pane
+    /// on title evidence alone — the summary there is arbitrary task text.
+    #[test]
+    fn test_no_title_only_match() {
+        let parser = KiroCliParser::new();
+        assert!(!parser.matches_title("kiro: tmuxcc Kiro CLI detection"));
+        assert!(!parser.matches_title("kiro-cli 쉘 통합 제거"));
     }
 
     #[test]

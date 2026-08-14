@@ -34,8 +34,23 @@ pub trait AgentParser: Send + Sync {
     /// Returns the AgentType for this parser
     fn agent_type(&self) -> AgentType;
 
-    /// Checks if any of the detection strings match this agent
+    /// Checks if any of the process-derived detection strings (pane command,
+    /// cmdline, child commands) match this agent.
+    ///
+    /// The pane title is **not** included — see [`PaneInfo::process_strings`].
     fn matches(&self, detection_strings: &[&str]) -> bool;
+
+    /// Fallback: recognises the agent from its pane-title branding alone.
+    ///
+    /// Only implement this where the title carries a marker the agent itself
+    /// writes and no other tool would (Claude Code's `✳` glyph, Grok's
+    /// ` - grok` suffix). It is consulted only when no parser matched on
+    /// process evidence, so a real process always wins over a title that
+    /// merely *mentions* another agent.
+    fn matches_title(&self, title: &str) -> bool {
+        let _ = title;
+        false
+    }
 
     /// Parses the pane content and returns the agent status
     fn parse_status(&self, content: &str) -> AgentStatus;
@@ -87,12 +102,18 @@ impl ParserRegistry {
         }
     }
 
-    /// Finds a parser that matches the given pane info
+    /// Finds a parser that matches the given pane info.
+    ///
+    /// Process evidence is resolved first, across *all* parsers, before any
+    /// title branding is considered. Pane titles hold a task summary now, so a
+    /// title naming another agent must never outrank the process actually
+    /// running in the pane.
     pub fn find_parser_for_pane(&self, pane: &PaneInfo) -> Option<&dyn AgentParser> {
-        let detection_strings = pane.detection_strings();
+        let process_strings = pane.process_strings();
         self.parsers
             .iter()
-            .find(|p| p.matches(&detection_strings))
+            .find(|p| p.matches(&process_strings))
+            .or_else(|| self.parsers.iter().find(|p| p.matches_title(&pane.title)))
             .map(|p| p.as_ref())
     }
 
@@ -160,7 +181,7 @@ mod tests {
         };
         assert!(registry.find_parser_for_pane(&child_claude_pane).is_some());
 
-        // Grok via truncated pane command + title branding
+        // Grok via truncated pane command
         let grok_pane = PaneInfo {
             session: "main".to_string(),
             window: 3,
@@ -177,6 +198,96 @@ mod tests {
             .find_parser_for_pane(&grok_pane)
             .expect("should detect Grok");
         assert_eq!(grok_parser.agent_type(), crate::agents::AgentType::Grok);
+    }
+
+    /// Regression (observed live on `main:2.3`): the pane title now holds a
+    /// task summary, and that summary named Claude Code — so the ClaudeCode
+    /// parser, which comes first in the registry, claimed a Grok pane.
+    /// Process evidence must win over anything the title says.
+    #[test]
+    fn test_task_summary_naming_another_agent_loses_to_the_process() {
+        let registry = ParserRegistry::new();
+
+        let grok_pane_titled_claude = PaneInfo {
+            session: "main".to_string(),
+            window: 2,
+            window_name: "proxy".to_string(),
+            pane: 3,
+            command: "fish".to_string(),
+            title: "Claude Code Proxy Open Source GitHub Sea… - grok".to_string(),
+            path: "/Users/timer/Documents/Code/tz/tmuxcc".to_string(),
+            pid: 64479,
+            cmdline: "fish".to_string(),
+            child_commands: vec!["grok --always-approve".to_string(), "grok".to_string()],
+        };
+        let parser = registry
+            .find_parser_for_pane(&grok_pane_titled_claude)
+            .expect("should detect Grok");
+        assert_eq!(parser.agent_type(), crate::agents::AgentType::Grok);
+
+        // The mirror case: a Kiro CLI session whose task is "investigate the
+        // grok parser" stays Kiro CLI.
+        let kiro_pane_titled_grok = PaneInfo {
+            session: "main".to_string(),
+            window: 1,
+            window_name: "tmuxcc".to_string(),
+            pane: 1,
+            command: "fish".to_string(),
+            title: "grok 파서 오탐 조사 - claude vs grok".to_string(),
+            path: "/Users/timer/Documents/Code/tz/tmuxcc".to_string(),
+            pid: 21915,
+            cmdline: "fish (kiro-cli-term)".to_string(),
+            child_commands: vec![
+                "fish".to_string(),
+                "kiro-cli chat --trust-all-tools --v3".to_string(),
+                "kiro-cli".to_string(),
+            ],
+        };
+        let parser = registry
+            .find_parser_for_pane(&kiro_pane_titled_grok)
+            .expect("should detect Kiro CLI");
+        assert_eq!(parser.agent_type(), crate::agents::AgentType::KiroCli);
+
+        // A plain shell whose title merely names an agent is still not an agent.
+        let shell_titled_claude = PaneInfo {
+            session: "lupa".to_string(),
+            window: 1,
+            window_name: "lupa".to_string(),
+            pane: 2,
+            command: "fish".to_string(),
+            title: "claude code 설치 메모".to_string(),
+            path: "/Users/timer/Documents/Code/tz/lupa".to_string(),
+            pid: 90915,
+            cmdline: "fish (kiro-cli-term)".to_string(),
+            child_commands: vec!["fish".to_string()],
+        };
+        assert!(registry
+            .find_parser_for_pane(&shell_titled_claude)
+            .is_none());
+    }
+
+    /// The `✳` glyph is still enough on its own, for panes whose process tree
+    /// is invisible to the local `ps` (ssh/mosh hops).
+    #[test]
+    fn test_claude_icon_title_is_a_fallback() {
+        let registry = ParserRegistry::new();
+
+        let remote_claude = PaneInfo {
+            session: "main".to_string(),
+            window: 6,
+            window_name: "remote".to_string(),
+            pane: 0,
+            command: "ssh".to_string(),
+            title: "✳ Refactor the ingest pipeline".to_string(),
+            path: "/Users/timer".to_string(),
+            pid: 4242,
+            cmdline: "ssh build-box".to_string(),
+            child_commands: Vec::new(),
+        };
+        let parser = registry
+            .find_parser_for_pane(&remote_claude)
+            .expect("should fall back to Claude Code");
+        assert_eq!(parser.agent_type(), crate::agents::AgentType::ClaudeCode);
     }
 
     #[test]

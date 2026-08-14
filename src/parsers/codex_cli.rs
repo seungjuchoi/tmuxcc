@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn test_matches() {
         let parser = CodexCliParser::new();
-        assert!(parser.matches(&["codex", "", ""]));
-        assert!(parser.matches(&["", "Codex CLI", ""]));
-        assert!(!parser.matches(&["claude", "Claude", ""]));
+        assert!(parser.matches(&["codex", ""]));
+        assert!(parser.matches(&["node", "/usr/bin/codex"]));
+        assert!(!parser.matches(&["claude", "claude"]));
     }
 }

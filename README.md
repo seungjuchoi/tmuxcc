@@ -87,15 +87,29 @@ the pane content:
 - **Context**: the status bar reports context *used* (`◔ 18%`), which tmuxcc
   inverts into the remaining percentage it displays
 - **Task summary**: Kiro has no per-turn equivalent of Claude Code's `✳ <task>`
-  pane title. Enable `chat.terminalTitle` (`/settings` → display, off by
-  default) and name the session with `/title <text>`; tmuxcc strips the
-  `kiro: ` prefix. Without a name the title is just the working directory, so
-  the sidebar falls back to the path.
+  pane title, and writes nothing to the title itself. Set it from an agent hook
+  instead — `tmux select-pane -T '<task>'` — and tmuxcc shows that text
+  verbatim. Titles that still look like a shell title (`kiro-cli --resume-id
+  ~/D/C/C/downloader`, i.e. ending in a path) are discarded, so the sidebar
+  falls back to the abbreviated path until the session is named.
+  A `kiro: ` prefix is stripped too, for the `chat.terminalTitle` setting.
 
 Kiro's shell integration renames the pane shell to `fish (kiro-cli-term)` in
 *every* pane opened from a Kiro terminal, including plain shells and panes
 running other agents. That marker is explicitly ignored, so only panes with a
 real `kiro-cli` process are reported as Kiro agents.
+
+#### How a pane's agent is identified
+
+Only the **process tree** decides which agent owns a pane: `pane_current_command`,
+the pane process's command line, and its descendants up to 6 levels deep. The
+pane title is excluded, because titles now carry a human-written task summary
+that may name any tool the session is working on — a Grok pane titled
+`Claude Code proxy … - grok` used to be reported as Claude Code.
+
+Title branding is consulted only as a fallback, when no process matched at all:
+Claude Code's `✳` glyph and Grok's ` - grok` suffix. That covers agents running
+behind an ssh hop the local `ps` cannot see.
 
 ---
 

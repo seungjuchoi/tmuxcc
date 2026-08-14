@@ -66,9 +66,14 @@ impl AgentParser for GrokParser {
             let lower = s.to_lowercase();
             // Process / cmdline: "grok", "grok --always-approve"
             // Truncated pane command: "grok-1.0.3-maco"
-            // Pane title branding: "... - grok"
             lower.contains("grok")
         })
+    }
+
+    fn matches_title(&self, title: &str) -> bool {
+        // Grok appends its branding as a suffix: "<task> - grok". Anchoring to
+        // the end keeps a task summary that merely says "grok" from matching.
+        title.trim_end().to_lowercase().ends_with(" - grok")
     }
 
     fn parse_status(&self, content: &str) -> AgentStatus {
@@ -175,26 +180,26 @@ mod tests {
     fn test_matches() {
         let parser = GrokParser::new();
         // Process name
-        assert!(parser.matches(&["grok", "", ""]));
+        assert!(parser.matches(&["grok", ""]));
         // Truncated binary name from pane_current_command
-        assert!(parser.matches(&["grok-1.0.3-maco", "", ""]));
+        assert!(parser.matches(&["grok-1.0.3-maco", ""]));
         // Cmdline
-        assert!(parser.matches(&["fish", "", "grok --always-approve"]));
-        // Title branding
-        assert!(parser.matches(&[
-            "fish",
-            "Recent Downloads Top 15 by Modification … - grok",
-            ""
-        ]));
-        assert!(parser.matches(&[
-            "grok-1.0.3-maco",
-            "⠹ - Running: Read foo - tmuxcc Grok detection - grok",
-            "grok --always-approve"
-        ]));
+        assert!(parser.matches(&["fish", "grok --always-approve"]));
         // No match
-        assert!(!parser.matches(&["claude", "Claude Code", ""]));
-        assert!(!parser.matches(&["opencode", "OpenCode", "opencode"]));
-        assert!(!parser.matches(&["fish", "~", "fish"]));
+        assert!(!parser.matches(&["claude", ""]));
+        assert!(!parser.matches(&["opencode", "opencode"]));
+        assert!(!parser.matches(&["fish", "fish"]));
+    }
+
+    #[test]
+    fn test_matches_title_branding_suffix() {
+        let parser = GrokParser::new();
+        assert!(parser.matches_title("Recent Downloads Top 15 by Modification … - grok"));
+        assert!(parser.matches_title("⠹ - Running: Read foo - tmuxcc Grok detection - grok"));
+        // A task summary that merely mentions Grok is not the branding suffix.
+        assert!(!parser.matches_title("✳ tmuxcc Grok detection"));
+        assert!(!parser.matches_title("grok parser rewrite"));
+        assert!(!parser.matches_title("~"));
     }
 
     #[test]

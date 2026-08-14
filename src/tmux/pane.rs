@@ -189,13 +189,16 @@ impl PaneInfo {
         })
     }
 
-    /// Returns all detection strings (command, title, cmdline, child commands) for agent matching
-    pub fn detection_strings(&self) -> Vec<&str> {
-        let mut strings = vec![
-            self.command.as_str(),
-            self.title.as_str(),
-            self.cmdline.as_str(),
-        ];
+    /// Returns the process-derived detection strings (pane command, cmdline and
+    /// child commands) used for agent matching.
+    ///
+    /// The pane **title** is deliberately excluded: agents now write a
+    /// human-readable task summary there, so a title may name any tool the
+    /// session happens to be working on ("Claude Code proxy … - grok"). Only
+    /// the process tree is trustworthy evidence of which agent is running;
+    /// title-only signals go through [`AgentParser::matches_title`].
+    pub fn process_strings(&self) -> Vec<&str> {
+        let mut strings = vec![self.command.as_str(), self.cmdline.as_str()];
 
         // Add child command strings
         for cmd in &self.child_commands {
@@ -240,22 +243,25 @@ mod tests {
     }
 
     #[test]
-    fn test_detection_strings() {
+    fn test_process_strings_exclude_the_title() {
         let pane = PaneInfo {
             session: "main".to_string(),
             window: 0,
             window_name: "code".to_string(),
             pane: 0,
             command: "zsh".to_string(),
-            title: "~".to_string(),
+            title: "✳ investigate the grok parser".to_string(),
             path: "/home/user".to_string(),
             pid: 1234,
             cmdline: "-zsh".to_string(),
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
         };
-        let strings = pane.detection_strings();
+        let strings = pane.process_strings();
         assert!(strings.contains(&"zsh"));
+        assert!(strings.contains(&"-zsh"));
         assert!(strings.contains(&"claude -c"));
         assert!(strings.contains(&"claude"));
+        // The title is a task summary, not evidence of which agent is running.
+        assert!(!strings.contains(&"✳ investigate the grok parser"));
     }
 }

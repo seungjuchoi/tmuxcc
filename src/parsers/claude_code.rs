@@ -384,11 +384,16 @@ impl AgentParser for ClaudeCodeParser {
             let lower = s.to_lowercase();
             // Match by name
             lower.contains("claude") || lower.contains("anthropic")
-            // Match by Claude Code icon (✳) in title
-            || s.contains('✳')
             // Match by version number pattern (e.g., "2.1.11" as command)
             || is_version_like(s)
         })
+    }
+
+    fn matches_title(&self, title: &str) -> bool {
+        // Claude Code prefixes its pane title with `✳` (or a spinner glyph
+        // while busy). Used only when the process tree yielded nothing — e.g.
+        // Claude running behind an ssh/mosh hop the local `ps` cannot see.
+        title.contains('✳')
     }
 
     fn parse_status(&self, content: &str) -> AgentStatus {
@@ -505,22 +510,30 @@ mod tests {
     #[test]
     fn test_matches() {
         let parser = ClaudeCodeParser::new();
-        // Match via command
-        assert!(parser.matches(&["claude", "", ""]));
-        assert!(parser.matches(&["Claude", "", ""]));
+        // Match via pane command
+        assert!(parser.matches(&["claude", ""]));
+        assert!(parser.matches(&["Claude", ""]));
         // Match via cmdline
-        assert!(parser.matches(&["node", "", "/usr/bin/claude -c"]));
-        // Match via title with Claude Code text
-        assert!(parser.matches(&["2.1.11", "Claude Code", ""]));
-        // Match via ✳ icon in title
-        assert!(parser.matches(&["node", "✳ Some Task", ""]));
-        assert!(parser.matches(&["2.1.11", "✳ CLI取得の改善", ""]));
+        assert!(parser.matches(&["node", "/usr/bin/claude -c"]));
         // Match via version number as command (Claude Code shows version)
-        assert!(parser.matches(&["2.1.11", "Some Title", ""]));
-        assert!(parser.matches(&["1.0.0", "", ""]));
+        assert!(parser.matches(&["2.1.11", ""]));
+        assert!(parser.matches(&["1.0.0", ""]));
         // No match
-        assert!(!parser.matches(&["opencode", "OpenCode", "opencode"]));
-        assert!(!parser.matches(&["fish", "~", "fish"]));
+        assert!(!parser.matches(&["opencode", "opencode"]));
+        assert!(!parser.matches(&["fish", "fish"]));
+    }
+
+    #[test]
+    fn test_matches_title_is_the_icon_only() {
+        let parser = ClaudeCodeParser::new();
+        // The ✳ glyph is written by Claude Code itself.
+        assert!(parser.matches_title("✳ Some Task"));
+        assert!(parser.matches_title("✳ CLI取得の改善"));
+        // A task summary that merely *names* Claude Code is not evidence:
+        // this exact title belongs to a Grok pane.
+        assert!(!parser.matches_title("Claude Code Proxy Open Source GitHub Sea… - grok"));
+        assert!(!parser.matches_title("Claude Code"));
+        assert!(!parser.matches_title("~"));
     }
 
     #[test]

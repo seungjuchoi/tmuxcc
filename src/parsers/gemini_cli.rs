@@ -80,8 +80,8 @@ mod tests {
     #[test]
     fn test_matches() {
         let parser = GeminiCliParser::new();
-        assert!(parser.matches(&["gemini", "", ""]));
-        assert!(parser.matches(&["", "Gemini CLI", ""]));
-        assert!(!parser.matches(&["claude", "Claude", ""]));
+        assert!(parser.matches(&["gemini", ""]));
+        assert!(parser.matches(&["node", "/usr/bin/gemini"]));
+        assert!(!parser.matches(&["claude", "claude"]));
     }
 }

@@ -370,11 +370,18 @@ impl MonitoredAgent {
             return None;
         }
 
-        // Shell titles of the form "<command> <cwd>" (fish writes e.g.
-        // "kr ~/D/C/t/tmuxcc"). Agents that don't set the pane title — Kiro CLI
-        // among them — would otherwise show the shell's title as a task.
+        // Shell titles of the form "<command> [args…] <cwd>" — fish writes e.g.
+        // "kr ~/D/C/t/tmuxcc" or "kiro-cli --resume-id ~/D/C/C/downloader".
+        // Agents that haven't named the session yet (Kiro CLI before its
+        // pane-title hook runs) would otherwise show the shell's own title as
+        // a task. A trailing path-like token is the tell.
         let tokens: Vec<&str> = cleaned.split_whitespace().collect();
-        if tokens.len() == 2 && (tokens[1].starts_with('~') || tokens[1].starts_with('/')) {
+        if tokens.len() >= 2
+            && tokens
+                .last()
+                .map(|last| last.starts_with('~') || last.starts_with('/'))
+                .unwrap_or(false)
+        {
             return None;
         }
 
@@ -459,9 +466,44 @@ mod tests {
         agent.title = "kiro: ~/Documents/Code/tz/tmuxcc".to_string();
         assert_eq!(agent.task_summary(), None);
 
-        // `chat.terminalTitle` off -> fish's "<command> <cwd>" title
+        // `chat.terminalTitle` off -> fish's "<command> [args…] <cwd>" title
         agent.title = "kr ~/D/C/t/tmuxcc".to_string();
         assert_eq!(agent.task_summary(), None);
+        // Observed live on `sleep:3.1`: the wrapper passes flags, so the cwd is
+        // no longer the second token.
+        agent.title = "kiro-cli --resume-id ~/D/C/C/mmWave_sleep_downloader".to_string();
+        assert_eq!(agent.task_summary(), None);
+        agent.title = "nvim /Users/timer/src/main.rs".to_string();
+        assert_eq!(agent.task_summary(), None);
+    }
+
+    /// The pane-title hook is what actually names Kiro sessions (it runs
+    /// `tmux select-pane -T '<task>'`), so plain prose must survive untouched.
+    #[test]
+    fn test_hook_written_title_is_kept_verbatim() {
+        let mut agent = MonitoredAgent::new(
+            "a".to_string(),
+            "main:1.1".to_string(),
+            "main".to_string(),
+            1,
+            "tmuxcc".to_string(),
+            1,
+            "/Users/timer/Documents/Code/tz/tmuxcc".to_string(),
+            AgentType::KiroCli,
+            1,
+        );
+
+        agent.title = "tmuxcc kiro-cli 제목 추출 기능 검증".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("tmuxcc kiro-cli 제목 추출 기능 검증")
+        );
+
+        agent.title = "tmuxcc: preview scroll + mouse + colors".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("tmuxcc: preview scroll + mouse + colors")
+        );
     }
 
     #[test]
