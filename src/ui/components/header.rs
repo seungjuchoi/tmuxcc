@@ -38,15 +38,13 @@ impl HeaderWidget {
             ));
         }
 
-        // Pending count
-        spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+        // Pending count, shown only when something is actually waiting
         if pending > 0 {
+            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(
                 format!(" ⚠ {} pending ", pending),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ));
-        } else {
-            spans.push(Span::styled(" ✓ ready ", Style::default().fg(Color::Green)));
         }
 
         // System stats: CPU
