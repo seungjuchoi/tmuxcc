@@ -78,14 +78,16 @@ impl MonitorTask {
             if let Some(parser) = self.parser_registry.find_parser_for_pane(&pane) {
                 let target = pane.target();
 
-                // Capture pane content
-                let content = match self.tmux_client.capture_pane(&target) {
+                // Capture pane content. The styled copy keeps the colours for
+                // the preview; parsers work on the stripped text.
+                let styled = match self.tmux_client.capture_pane_styled(&target) {
                     Ok(c) => c,
                     Err(e) => {
                         error!("Failed to capture pane {}: {}", target, e);
                         continue;
                     }
                 };
+                let content = crate::ansi::strip(&styled);
 
                 // Parse status from content
                 let mut status = parser.parse_status(&content);
@@ -174,6 +176,7 @@ impl MonitorTask {
                 agent.title = pane.title.clone();
                 agent.subagents = subagents;
                 agent.last_content = content;
+                agent.styled_content = styled;
                 agent.context_used = context_used;
                 agent.touch(); // Update last_updated
 

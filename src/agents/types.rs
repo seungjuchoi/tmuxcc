@@ -207,6 +207,8 @@ pub struct MonitoredAgent {
     pub subagents: Vec<Subagent>,
     /// Last captured pane content
     pub last_content: String,
+    /// Last captured pane content with ANSI escape sequences intact (preview)
+    pub styled_content: String,
     /// Process ID
     pub pid: u32,
     /// When this agent was first detected
@@ -246,6 +248,7 @@ impl MonitoredAgent {
             status: AgentStatus::Unknown,
             subagents: Vec::new(),
             last_content: String::new(),
+            styled_content: String::new(),
             pid,
             started_at: now,
             last_updated: now,

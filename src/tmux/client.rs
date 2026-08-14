@@ -65,10 +65,28 @@ impl TmuxClient {
 
     /// Captures the content of a specific pane
     pub fn capture_pane(&self, target: &str) -> Result<String> {
+        self.capture(target, false)
+    }
+
+    /// Captures a pane keeping the ANSI escape sequences that colour it.
+    ///
+    /// Used for the preview so agent output looks like it does in the terminal;
+    /// run the result through [`crate::ansi::strip`] before parsing it.
+    pub fn capture_pane_styled(&self, target: &str) -> Result<String> {
+        self.capture(target, true)
+    }
+
+    fn capture(&self, target: &str, escapes: bool) -> Result<String> {
         let start_line = format!("-{}", self.capture_lines);
 
+        let mut args = vec!["capture-pane", "-p"];
+        if escapes {
+            args.push("-e");
+        }
+        args.extend_from_slice(&["-t", target, "-S", &start_line]);
+
         let output = Command::new("tmux")
-            .args(["capture-pane", "-p", "-t", target, "-S", &start_line])
+            .args(&args)
             .output()
             .context("Failed to execute tmux capture-pane")?;
 

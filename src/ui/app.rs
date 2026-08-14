@@ -14,7 +14,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use crate::app::{Action, AppState, Config};
+use crate::app::{Action, AppState, Config, Region, Regions};
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;
@@ -24,6 +24,9 @@ use super::components::{
     SubagentLogWidget,
 };
 use super::Layout;
+
+/// Rows scrolled per mouse wheel notch
+const WHEEL_STEP: usize = 3;
 
 /// Runs the main application loop
 pub async fn run_app(config: Config) -> Result<()> {
@@ -116,7 +119,6 @@ async fn run_loop(
                 // With subagent log: sidebar | preview+input | subagent_log
                 let (left, preview, subagent_log) =
                     Layout::content_layout_with_log(main_chunks[1], state.sidebar_width);
-                AgentTreeWidget::render(frame, left, state);
 
                 // Split preview area for preview and input
                 let preview_chunks = ratatui::layout::Layout::default()
@@ -126,6 +128,15 @@ async fn run_loop(
                         ratatui::layout::Constraint::Length(input_height + 2),
                     ])
                     .split(preview);
+
+                state.regions = Regions {
+                    sidebar: region(left),
+                    preview: region(preview_chunks[0]),
+                    input: region(preview_chunks[1]),
+                    subagent_log: region(subagent_log),
+                };
+
+                AgentTreeWidget::render(frame, left, state);
                 PanePreviewWidget::render_detailed(frame, preview_chunks[0], state);
                 InputWidget::render(frame, preview_chunks[1], state);
                 SubagentLogWidget::render(frame, subagent_log, state);
@@ -136,6 +147,14 @@ async fn run_loop(
                     state.sidebar_width,
                     input_height,
                 );
+
+                state.regions = Regions {
+                    sidebar: region(left),
+                    preview: region(preview),
+                    input: region(input_area),
+                    subagent_log: Region::default(),
+                };
+
                 AgentTreeWidget::render(frame, left, state);
                 PanePreviewWidget::render_detailed(frame, preview, state);
                 InputWidget::render(frame, input_area, state);
@@ -179,50 +198,41 @@ async fn run_loop(
                 while event::poll(Duration::from_millis(0))? {
                     let event = event::read()?;
 
-                    // Handle mouse events
+                    // Handle mouse events. Everything is routed by what sits
+                    // under the pointer, using the regions recorded while drawing.
                     if let Event::Mouse(mouse) = event {
-                        let size = terminal.size()?;
-                        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-                        let main_chunks = Layout::main_layout(area, FooterWidget::is_visible(state));
-                        let (sidebar, _, input_area) = Layout::content_layout_with_input(
-                            main_chunks[1], state.sidebar_width, 3
-                        );
+                        let regions = state.regions;
+                        let (x, y) = (mouse.column, mouse.row);
 
                         match mouse.kind {
                             MouseEventKind::Down(MouseButton::Left) => {
-                                let x = mouse.column;
-                                let y = mouse.row;
-
-                                // Check if click is in sidebar - try to select agent
-                                if x >= sidebar.x && x < sidebar.x + sidebar.width
-                                    && y >= sidebar.y && y < sidebar.y + sidebar.height
-                                {
+                                if regions.sidebar.contains(x, y) {
                                     state.focus_sidebar();
-                                    // Calculate which agent was clicked based on row
-                                    // Each agent takes ~4 lines in the tree view (varies)
-                                    // Simple heuristic: use relative row position
-                                    let rel_y = (y - sidebar.y).saturating_sub(1) as usize;
-                                    let agents_count = state.agents.root_agents.len();
-                                    if agents_count > 0 {
-                                        // Estimate ~4 lines per agent (header + info + status)
-                                        let estimated_idx = rel_y / 4;
-                                        if estimated_idx < agents_count {
-                                            state.select_agent(estimated_idx);
+                                    // Row 0 of the list sits just below the border
+                                    if y > regions.sidebar.y {
+                                        let row = (y - regions.sidebar.y - 1) as usize;
+                                        if let Some(idx) = state.agent_at_sidebar_row(row) {
+                                            state.select_agent(idx);
                                         }
                                     }
-                                }
-                                // Check if click is in input area
-                                else if x >= input_area.x && x < input_area.x + input_area.width
-                                    && y >= input_area.y && y < input_area.y + input_area.height
-                                {
+                                } else if regions.input.contains(x, y) {
                                     state.focus_input();
                                 }
                             }
                             MouseEventKind::ScrollUp => {
-                                state.select_prev();
+                                if regions.preview.contains(x, y) {
+                                    state.scroll_preview_back(WHEEL_STEP);
+                                } else if regions.sidebar.contains(x, y) {
+                                    // Scrolls the list viewport, not the cursor
+                                    state.scroll_sidebar_up(WHEEL_STEP);
+                                }
                             }
                             MouseEventKind::ScrollDown => {
-                                state.select_next();
+                                if regions.preview.contains(x, y) {
+                                    state.scroll_preview_forward(WHEEL_STEP);
+                                } else if regions.sidebar.contains(x, y) {
+                                    state.scroll_sidebar_down(WHEEL_STEP);
+                                }
                             }
                             _ => {}
                         }
@@ -380,11 +390,29 @@ async fn run_loop(
                             Action::SelectAgent(idx) => {
                                 state.select_agent(idx);
                             }
-                            Action::ScrollUp => {
-                                state.select_prev();
+                            Action::PreviewScrollBack(rows) => {
+                                state.scroll_preview_back(rows);
                             }
-                            Action::ScrollDown => {
-                                state.select_next();
+                            Action::PreviewScrollForward(rows) => {
+                                state.scroll_preview_forward(rows);
+                            }
+                            Action::PreviewPageBack => {
+                                state.scroll_preview_back(preview_page(state));
+                            }
+                            Action::PreviewPageForward => {
+                                state.scroll_preview_forward(preview_page(state));
+                            }
+                            Action::PreviewToTop => {
+                                state.preview_to_top();
+                            }
+                            Action::PreviewToBottom => {
+                                state.preview_to_bottom();
+                            }
+                            Action::SidebarScrollUp(rows) => {
+                                state.scroll_sidebar_up(rows);
+                            }
+                            Action::SidebarScrollDown(rows) => {
+                                state.scroll_sidebar_down(rows);
                             }
                             Action::None => {}
                         }
@@ -399,6 +427,22 @@ async fn run_loop(
     }
 
     Ok(())
+}
+
+/// Records a layout rectangle for later mouse hit-testing
+fn region(rect: ratatui::layout::Rect) -> Region {
+    Region {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    }
+}
+
+/// Half of the visible preview, used for page-wise scrolling
+fn preview_page(state: &AppState) -> usize {
+    let visible = state.regions.preview.height.saturating_sub(2) as usize;
+    (visible / 2).max(1)
 }
 
 fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -> Action {
@@ -431,6 +475,21 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
     match code {
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+
+        // Preview scrolling: Shift+J/K (and Shift+arrows) move the preview
+        // while j/k keep moving the cursor in the list
+        KeyCode::Char('J') => Action::PreviewScrollForward(1),
+        KeyCode::Char('K') => Action::PreviewScrollBack(1),
+        KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => Action::PreviewScrollForward(1),
+        KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => Action::PreviewScrollBack(1),
+        KeyCode::PageDown => Action::PreviewPageForward,
+        KeyCode::PageUp => Action::PreviewPageBack,
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::PreviewPageForward
+        }
+        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => Action::PreviewPageBack,
+        KeyCode::Char('G') => Action::PreviewToBottom,
+        KeyCode::Char('g') => Action::PreviewToTop,
 
         KeyCode::Char('j') | KeyCode::Down => Action::NextAgent,
         KeyCode::Char('k') | KeyCode::Up => Action::PrevAgent,

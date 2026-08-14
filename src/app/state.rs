@@ -13,6 +13,37 @@ pub enum FocusedPanel {
     Input,
 }
 
+/// A rectangle on screen, recorded during rendering so mouse events can be
+/// routed to whatever panel is under the pointer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Region {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Region {
+    /// True when the given screen cell falls inside the region
+    pub fn contains(&self, x: u16, y: u16) -> bool {
+        self.width > 0
+            && self.height > 0
+            && x >= self.x
+            && x < self.x + self.width
+            && y >= self.y
+            && y < self.y + self.height
+    }
+}
+
+/// Screen regions of the panels as they were last rendered
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Regions {
+    pub sidebar: Region,
+    pub preview: Region,
+    pub input: Region,
+    pub subagent_log: Region,
+}
+
 /// Tree structure containing all monitored agents
 #[derive(Debug, Clone, Default)]
 pub struct AgentTree {
@@ -99,6 +130,19 @@ pub struct AppState {
     pub last_error: Option<String>,
     /// Sidebar width in percentage (15-70)
     pub sidebar_width: u16,
+    /// Preview scroll offset in wrapped rows counted from the bottom
+    /// (0 follows the live output). Clamped while rendering, which is where the
+    /// content geometry is known.
+    pub preview_scroll: usize,
+    /// First visible row of the agent list
+    pub sidebar_scroll: usize,
+    /// Whether the next render should scroll the list to reveal the cursor
+    pub sidebar_follow_cursor: bool,
+    /// Agent index for every row of the agent list, recorded while rendering so
+    /// clicks land on the agent actually drawn there
+    pub sidebar_row_agents: Vec<Option<usize>>,
+    /// Panel regions from the last render, for mouse hit-testing
+    pub regions: Regions,
     /// Animation tick counter
     pub tick: usize,
     /// Last tick time for animation throttling
@@ -122,6 +166,11 @@ impl AppState {
             should_quit: false,
             last_error: None,
             sidebar_width: 35,
+            preview_scroll: 0,
+            sidebar_scroll: 0,
+            sidebar_follow_cursor: true,
+            sidebar_row_agents: Vec::new(),
+            regions: Regions::default(),
             tick: 0,
             last_tick: Instant::now(),
             system_stats: SystemStats::new(),
@@ -253,6 +302,7 @@ impl AppState {
     pub fn select_next(&mut self) {
         if !self.agents.root_agents.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.agents.root_agents.len();
+            self.on_cursor_moved();
         }
     }
 
@@ -264,6 +314,7 @@ impl AppState {
             } else {
                 self.selected_index -= 1;
             }
+            self.on_cursor_moved();
         }
     }
 
@@ -271,7 +322,60 @@ impl AppState {
     pub fn select_agent(&mut self, index: usize) {
         if index < self.agents.root_agents.len() {
             self.selected_index = index;
+            self.on_cursor_moved();
         }
+    }
+
+    /// Resets view state that is tied to the agent under the cursor
+    fn on_cursor_moved(&mut self) {
+        // A different pane means a different buffer: go back to the live tail
+        self.preview_scroll = 0;
+        self.sidebar_follow_cursor = true;
+    }
+
+    /// Scrolls the preview towards older output
+    pub fn scroll_preview_back(&mut self, rows: usize) {
+        self.preview_scroll = self.preview_scroll.saturating_add(rows);
+    }
+
+    /// Scrolls the preview towards the live output
+    pub fn scroll_preview_forward(&mut self, rows: usize) {
+        self.preview_scroll = self.preview_scroll.saturating_sub(rows);
+    }
+
+    /// Jumps the preview back to the live output
+    pub fn preview_to_bottom(&mut self) {
+        self.preview_scroll = 0;
+    }
+
+    /// Jumps the preview to the oldest captured output (clamped when rendering)
+    pub fn preview_to_top(&mut self) {
+        self.preview_scroll = usize::MAX;
+    }
+
+    /// True when the preview is showing history instead of the live output
+    pub fn is_preview_scrolled(&self) -> bool {
+        self.preview_scroll > 0
+    }
+
+    /// Scrolls the agent list viewport up without moving the cursor
+    pub fn scroll_sidebar_up(&mut self, rows: usize) {
+        self.sidebar_scroll = self.sidebar_scroll.saturating_sub(rows);
+        self.sidebar_follow_cursor = false;
+    }
+
+    /// Scrolls the agent list viewport down without moving the cursor
+    pub fn scroll_sidebar_down(&mut self, rows: usize) {
+        self.sidebar_scroll = self.sidebar_scroll.saturating_add(rows);
+        self.sidebar_follow_cursor = false;
+    }
+
+    /// Returns the agent drawn on the given row of the agent list, if any
+    pub fn agent_at_sidebar_row(&self, row: usize) -> Option<usize> {
+        self.sidebar_row_agents
+            .get(self.sidebar_scroll + row)
+            .copied()
+            .flatten()
     }
 
     /// Toggles selection of the current agent

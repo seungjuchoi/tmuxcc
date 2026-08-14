@@ -57,10 +57,22 @@ pub enum Action {
     SidebarNarrower,
     /// Select agent by index (mouse click)
     SelectAgent(usize),
-    /// Scroll up in sidebar
-    ScrollUp,
-    /// Scroll down in sidebar
-    ScrollDown,
+    /// Scroll the preview towards older output
+    PreviewScrollBack(usize),
+    /// Scroll the preview towards the live output
+    PreviewScrollForward(usize),
+    /// Jump the preview to the oldest captured output
+    PreviewToTop,
+    /// Jump the preview back to the live output
+    PreviewToBottom,
+    /// Scroll the preview back by half a screen
+    PreviewPageBack,
+    /// Scroll the preview forward by half a screen
+    PreviewPageForward,
+    /// Scroll the agent list viewport up (cursor stays put)
+    SidebarScrollUp(usize),
+    /// Scroll the agent list viewport down (cursor stays put)
+    SidebarScrollDown(usize),
     /// No action (used for unbound keys)
     None,
 }
@@ -97,8 +109,14 @@ impl Action {
             Action::SidebarWider => "Widen sidebar",
             Action::SidebarNarrower => "Narrow sidebar",
             Action::SelectAgent(_) => "Select agent",
-            Action::ScrollUp => "Scroll up",
-            Action::ScrollDown => "Scroll down",
+            Action::PreviewScrollBack(_) => "Scroll preview back",
+            Action::PreviewScrollForward(_) => "Scroll preview forward",
+            Action::PreviewToTop => "Scroll preview to oldest output",
+            Action::PreviewToBottom => "Follow live preview output",
+            Action::PreviewPageBack => "Scroll preview back half a screen",
+            Action::PreviewPageForward => "Scroll preview forward half a screen",
+            Action::SidebarScrollUp(_) => "Scroll agent list up",
+            Action::SidebarScrollDown(_) => "Scroll agent list down",
             Action::None => "",
         }
     }

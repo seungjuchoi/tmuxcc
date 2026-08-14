@@ -50,6 +50,29 @@ impl HelpWidget {
                 Span::styled("Go to selected pane (closes tmuxcc)", desc_style),
             ]),
             Line::from(vec![]),
+            Line::from(vec![Span::styled("Preview scrolling", section_style)]),
+            Line::from(vec![]),
+            Line::from(vec![
+                Span::styled("  J / K    ", key_style),
+                Span::styled("Scroll preview down / up (Shift+j/k)", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  ⇧↓ / ⇧↑  ", key_style),
+                Span::styled("Scroll preview down / up", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgDn/PgUp", key_style),
+                Span::styled("Scroll preview half a screen (Ctrl+d/u)", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  G / g    ", key_style),
+                Span::styled("Jump to live output / oldest output", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  Wheel    ", key_style),
+                Span::styled("Scrolls whatever is under the pointer", desc_style),
+            ]),
+            Line::from(vec![]),
             Line::from(vec![Span::styled("Selection", section_style)]),
             Line::from(vec![]),
             Line::from(vec![

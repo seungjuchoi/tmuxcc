@@ -41,7 +41,8 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 - **Hierarchical View**: Tree display organized by Session/Window/Pane
 - **Subagent Tracking**: Monitor spawned subagents (Task tool) with their status
 - **Context Awareness**: View context window usage percentage when available
-- **Pane Preview**: See live content from selected agent's tmux pane
+- **Pane Preview**: See live content from selected agent's tmux pane, in the
+  colors the agent printed, and scroll back through it
 - **Focus Integration**: Jump directly to any agent's pane in tmux
 - **Customizable**: Configure polling interval, capture lines, and custom agent patterns
 
@@ -184,6 +185,33 @@ tmuxcc --init-config
 | `Tab` | Cycle through agents |
 | `1`-`9` | Jump cursor to agent number |
 | `Enter` | Go to selected pane (closes tmuxcc) |
+
+### Preview Scrolling
+
+The preview follows the live output until you scroll it; the title then shows how
+far back you are (`↑12 of 143`) and the border turns yellow. `G` returns to live.
+Scroll depth is limited by `--capture-lines` (100 by default).
+
+| Key | Action |
+|-----|--------|
+| `J` / `K` (`Shift`+`j`/`k`) | Scroll preview down / up one row |
+| `Shift`+`Down` / `Shift`+`Up` | Scroll preview down / up one row |
+| `PageDown` / `PageUp` | Scroll preview half a screen |
+| `Ctrl+d` / `Ctrl+u` | Scroll preview half a screen |
+| `G` | Jump back to live output |
+| `g` | Jump to the oldest captured output |
+
+### Mouse
+
+| Action | Effect |
+|--------|--------|
+| Wheel over the preview | Scrolls the preview |
+| Wheel over the agent list | Scrolls the list viewport (the cursor stays put) |
+| Click in the agent list | Selects the agent on that row |
+| Click in the input box | Focuses the input |
+
+The wheel acts on whatever sits under the pointer, so a list that already fits on
+screen does not move.
 
 ### Selection
 
