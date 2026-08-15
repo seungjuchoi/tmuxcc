@@ -11,24 +11,23 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 <!-- TODO: Add actual screenshot -->
 ```
 +------------------------------------------------------------------+
-|  TmuxCC - AI Agent Dashboard                   Agents: 3 Active: 1|
+| TmuxCC | 7 agents | * 1 working | CPU 17% | MEM 11.9G/16.0G (75%) |
 +------------------------------------------------------------------+
-| main (Session)                    | Preview: main:0.0             |
-| +-- 0: code                       |                               |
-| |  +-- ~/project1                 | Claude Code wants to edit:    |
-| |  |  * Claude Code  ! [Edit]     | src/main.rs                   |
-| |  |     +-- > Explore (Running)  |                               |
-| |  +-- ~/project2                 | - fn main() {                 |
-| |     o OpenCode   @ Processing   | + fn main() -> Result<()> {   |
-| +-- 1: shell                      |                               |
-|    +-- ~/tools                    | Do you want to allow this     |
-|       o Codex CLI  * Idle         | edit? [y/n]                   |
+| v main                            | main:2.0 (Kiro CLI)          |
+|   project1                        |                              |
+| |   1 ! PyCut video autoedit      | Kiro wants to run:           |
+| |     Claude | ctx: 44% ####...   | rm -rf build/                |
+| |     ! Shell                     |                              |
+| |     -> rm -rf build/            | Allow this command? [y/n]    |
+|   project2                        |                              |
+|     2 * /U/t/D/tz                 |                              |
+|       Kiro | ctx: 90% #########.  |                              |
+|       Shell cargo build           |                              |
+|      -> * subagent (12s)          |                              |
 +------------------------------------------------------------------+
-| [Y] Approve [N] Reject [A] All | [1-9] Choice | [Space] Select    |
+| 2 selected                                                       |
 +------------------------------------------------------------------+
 ```
-
-*Replace with actual screenshot*
 
 ---
 
@@ -128,6 +127,16 @@ git clone https://github.com/nyanko3141592/tmuxcc.git
 cd tmuxcc
 cargo build --release
 cargo install --path .
+```
+
+### Verifying a local change
+
+After editing the source, this installs the binary and prints one rendered frame
+from a throwaway tmux session, so the UI can be checked without attaching:
+
+```bash
+./scripts/install-and-verify.sh          # fmt + clippy + tests + install + frame
+./scripts/install-and-verify.sh --no-ui  # install only
 ```
 
 ### Requirements
@@ -242,7 +251,7 @@ screen does not move.
 | `y` / `Y` | Approve pending request(s) |
 | `n` / `N` | Reject pending request(s) |
 | `a` / `A` | Approve ALL pending requests |
-| `Left` / `Right` | Switch focus (Sidebar / Input) |
+| `Left` / `Right` | Narrow / widen the sidebar (same as `<` / `>`) |
 
 ### View
 
@@ -297,14 +306,15 @@ agent_type = "CustomAgent"
 
 ## Status Indicators
 
-| Icon | Status |
-|------|--------|
-| `!` `[Edit]` | File edit approval pending |
-| `!` `[Shell]` | Shell command approval pending |
-| `!` `[Question]` | User question awaiting response |
-| `@` | Processing |
-| `*` | Idle |
-| `?` | Unknown |
+The glyph and its color carry the state, so no status label is printed in the list.
+
+| Icon | Color | Status |
+|------|-------|--------|
+| `⚠` | red | Approval / question pending (details are listed below the agent) |
+| spinner | green | Working (the activity text is shown below when the agent reports one) |
+| `●` | yellow | Idle — waiting for your input |
+| `✗` | red | Error |
+| `○` | gray | Unknown |
 
 ---
 
@@ -329,7 +339,7 @@ tmuxcc/
 │   │   ├── types.rs      # AgentType, AgentStatus, MonitoredAgent
 │   │   └── subagent.rs   # Subagent, SubagentType, SubagentStatus
 │   ├── app/              # Application logic
-│   │   ├── state.rs      # AppState, AgentTree, InputMode
+│   │   ├── state.rs      # AppState, AgentTree
 │   │   ├── actions.rs    # Action enum
 │   │   └── config.rs     # Configuration
 │   ├── monitor/          # Monitoring

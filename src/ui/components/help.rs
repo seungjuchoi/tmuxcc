@@ -104,7 +104,7 @@ impl HelpWidget {
             ]),
             Line::from(vec![
                 Span::styled("  ← / →    ", key_style),
-                Span::styled("Switch focus (Sidebar / Input)", desc_style),
+                Span::styled("Narrow / widen the sidebar (also < >)", desc_style),
             ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("View", section_style)]),

@@ -3,16 +3,6 @@ use crate::monitor::SystemStats;
 use std::collections::HashSet;
 use std::time::Instant;
 
-/// Which panel is currently focused
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FocusedPanel {
-    /// Agent list sidebar is focused
-    #[default]
-    Sidebar,
-    /// Input area is focused
-    Input,
-}
-
 /// A rectangle on screen, recorded during rendering so mouse events can be
 /// routed to whatever panel is under the pointer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -40,7 +30,6 @@ impl Region {
 pub struct Regions {
     pub sidebar: Region,
     pub preview: Region,
-    pub input: Region,
     pub subagent_log: Region,
 }
 
@@ -114,12 +103,6 @@ pub struct AppState {
     pub selected_index: usize,
     /// Multi-selected agent indices
     pub selected_agents: HashSet<usize>,
-    /// Which panel is focused
-    pub focused_panel: FocusedPanel,
-    /// Input buffer (always available)
-    pub input_buffer: String,
-    /// Cursor position within input buffer (byte offset)
-    pub cursor_position: usize,
     /// Whether help is being shown
     pub show_help: bool,
     /// Whether subagent log is shown
@@ -158,9 +141,6 @@ impl AppState {
             agents: AgentTree::new(),
             selected_index: 0,
             selected_agents: HashSet::new(),
-            focused_panel: FocusedPanel::Sidebar,
-            input_buffer: String::new(),
-            cursor_position: 0,
             show_help: false,
             show_subagent_log: false,
             should_quit: false,
@@ -189,103 +169,6 @@ impl AppState {
     /// Get the current spinner frame
     pub fn spinner_frame(&self) -> &'static str {
         SPINNER_FRAMES[self.tick % SPINNER_FRAMES.len()]
-    }
-
-    /// Check if input panel is focused
-    pub fn is_input_focused(&self) -> bool {
-        self.focused_panel == FocusedPanel::Input
-    }
-
-    /// Focus on the input panel
-    pub fn focus_input(&mut self) {
-        self.focused_panel = FocusedPanel::Input;
-    }
-
-    /// Focus on the sidebar
-    pub fn focus_sidebar(&mut self) {
-        self.focused_panel = FocusedPanel::Sidebar;
-    }
-
-    /// Toggle focus between panels
-    pub fn toggle_focus(&mut self) {
-        self.focused_panel = match self.focused_panel {
-            FocusedPanel::Sidebar => FocusedPanel::Input,
-            FocusedPanel::Input => FocusedPanel::Sidebar,
-        };
-    }
-
-    /// Add a character to the input buffer at cursor position
-    pub fn input_char(&mut self, c: char) {
-        self.input_buffer.insert(self.cursor_position, c);
-        self.cursor_position += c.len_utf8();
-    }
-
-    /// Add a newline to the input buffer at cursor position
-    pub fn input_newline(&mut self) {
-        self.input_buffer.insert(self.cursor_position, '\n');
-        self.cursor_position += 1;
-    }
-
-    /// Delete the character before the cursor
-    pub fn input_backspace(&mut self) {
-        if self.cursor_position > 0 {
-            // Find the previous character boundary
-            let prev_boundary = self.input_buffer[..self.cursor_position]
-                .char_indices()
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.input_buffer.remove(prev_boundary);
-            self.cursor_position = prev_boundary;
-        }
-    }
-
-    /// Get the current input buffer
-    pub fn get_input(&self) -> &str {
-        &self.input_buffer
-    }
-
-    /// Get the current cursor position
-    pub fn get_cursor_position(&self) -> usize {
-        self.cursor_position
-    }
-
-    /// Take and clear the input buffer
-    pub fn take_input(&mut self) -> String {
-        self.cursor_position = 0;
-        std::mem::take(&mut self.input_buffer)
-    }
-
-    /// Move cursor left by one character
-    pub fn cursor_left(&mut self) {
-        if self.cursor_position > 0 {
-            // Find the previous character boundary
-            self.cursor_position = self.input_buffer[..self.cursor_position]
-                .char_indices()
-                .last()
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-        }
-    }
-
-    /// Move cursor right by one character
-    pub fn cursor_right(&mut self) {
-        if self.cursor_position < self.input_buffer.len() {
-            // Find the next character boundary
-            if let Some(c) = self.input_buffer[self.cursor_position..].chars().next() {
-                self.cursor_position += c.len_utf8();
-            }
-        }
-    }
-
-    /// Move cursor to the beginning of the input
-    pub fn cursor_home(&mut self) {
-        self.cursor_position = 0;
-    }
-
-    /// Move cursor to the end of the input
-    pub fn cursor_end(&mut self) {
-        self.cursor_position = self.input_buffer.len();
     }
 
     /// Returns the currently selected agent

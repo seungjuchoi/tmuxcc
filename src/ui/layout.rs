@@ -31,32 +31,6 @@ impl Layout {
         (chunks[0], chunks[1])
     }
 
-    /// Splits the content area with preview and input
-    /// Returns (sidebar, preview, input)
-    pub fn content_layout_with_input(
-        area: Rect,
-        sidebar_width: u16,
-        input_height: u16,
-    ) -> (Rect, Rect, Rect) {
-        let columns = ratatui::layout::Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(sidebar_width),
-                Constraint::Percentage(100 - sidebar_width),
-            ])
-            .split(area);
-
-        let right_side = ratatui::layout::Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(5),                   // Preview (pane content)
-                Constraint::Length(input_height + 2), // Input area (+ border)
-            ])
-            .split(columns[1]);
-
-        (columns[0], right_side[0], right_side[1])
-    }
-
     /// Splits the content area with subagent log (2 columns, right side split vertically)
     pub fn content_layout_with_log(area: Rect, sidebar_width: u16) -> (Rect, Rect, Rect) {
         let columns = ratatui::layout::Layout::default()

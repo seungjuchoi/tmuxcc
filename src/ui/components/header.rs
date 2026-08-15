@@ -34,7 +34,7 @@ impl HeaderWidget {
             spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
             spans.push(Span::styled(
                 format!(" {} {} working ", state.spinner_frame(), processing),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(Color::Green),
             ));
         }
 

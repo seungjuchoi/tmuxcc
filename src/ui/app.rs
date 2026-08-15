@@ -20,8 +20,7 @@ use crate::parsers::ParserRegistry;
 use crate::tmux::TmuxClient;
 
 use super::components::{
-    AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, InputWidget, PanePreviewWidget,
-    SubagentLogWidget,
+    AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, PanePreviewWidget, SubagentLogWidget,
 };
 use super::Layout;
 
@@ -112,52 +111,32 @@ async fn run_loop(
             // Header
             HeaderWidget::render(frame, main_chunks[0], state);
 
-            // Always show input widget at bottom of right column
-            let input_height = InputWidget::calculate_height(state.get_input(), 6);
-
             if state.show_subagent_log {
-                // With subagent log: sidebar | preview+input | subagent_log
+                // With subagent log: sidebar | preview | subagent_log
                 let (left, preview, subagent_log) =
                     Layout::content_layout_with_log(main_chunks[1], state.sidebar_width);
-
-                // Split preview area for preview and input
-                let preview_chunks = ratatui::layout::Layout::default()
-                    .direction(ratatui::layout::Direction::Vertical)
-                    .constraints([
-                        ratatui::layout::Constraint::Min(5),
-                        ratatui::layout::Constraint::Length(input_height + 2),
-                    ])
-                    .split(preview);
-
-                state.regions = Regions {
-                    sidebar: region(left),
-                    preview: region(preview_chunks[0]),
-                    input: region(preview_chunks[1]),
-                    subagent_log: region(subagent_log),
-                };
-
-                AgentTreeWidget::render(frame, left, state);
-                PanePreviewWidget::render_detailed(frame, preview_chunks[0], state);
-                InputWidget::render(frame, preview_chunks[1], state);
-                SubagentLogWidget::render(frame, subagent_log, state);
-            } else {
-                // Normal: sidebar | preview+input
-                let (left, preview, input_area) = Layout::content_layout_with_input(
-                    main_chunks[1],
-                    state.sidebar_width,
-                    input_height,
-                );
 
                 state.regions = Regions {
                     sidebar: region(left),
                     preview: region(preview),
-                    input: region(input_area),
+                    subagent_log: region(subagent_log),
+                };
+
+                AgentTreeWidget::render(frame, left, state);
+                PanePreviewWidget::render_detailed(frame, preview, state);
+                SubagentLogWidget::render(frame, subagent_log, state);
+            } else {
+                // Normal: sidebar | preview
+                let (left, preview) = Layout::content_layout(main_chunks[1], state.sidebar_width);
+
+                state.regions = Regions {
+                    sidebar: region(left),
+                    preview: region(preview),
                     subagent_log: Region::default(),
                 };
 
                 AgentTreeWidget::render(frame, left, state);
                 PanePreviewWidget::render_detailed(frame, preview, state);
-                InputWidget::render(frame, input_area, state);
             }
 
             // Footer (only when there is an error or an active selection)
@@ -207,7 +186,6 @@ async fn run_loop(
                         match mouse.kind {
                             MouseEventKind::Down(MouseButton::Left) => {
                                 if regions.sidebar.contains(x, y) {
-                                    state.focus_sidebar();
                                     // Row 0 of the list sits just below the border
                                     if y > regions.sidebar.y {
                                         let row = (y - regions.sidebar.y - 1) as usize;
@@ -215,8 +193,6 @@ async fn run_loop(
                                             state.select_agent(idx);
                                         }
                                     }
-                                } else if regions.input.contains(x, y) {
-                                    state.focus_input();
                                 }
                             }
                             MouseEventKind::ScrollUp => {
@@ -336,51 +312,6 @@ async fn run_loop(
                             Action::HideHelp => {
                                 state.show_help = false;
                             }
-                            Action::FocusInput => {
-                                state.focus_input();
-                            }
-                            Action::FocusSidebar => {
-                                state.focus_sidebar();
-                            }
-                            Action::ClearInput => {
-                                state.take_input();
-                            }
-                            Action::InputChar(c) => {
-                                state.input_char(c);
-                            }
-                            Action::InputNewline => {
-                                state.input_newline();
-                            }
-                            Action::InputBackspace => {
-                                state.input_backspace();
-                            }
-                            Action::CursorLeft => {
-                                state.cursor_left();
-                            }
-                            Action::CursorRight => {
-                                state.cursor_right();
-                            }
-                            Action::CursorHome => {
-                                state.cursor_home();
-                            }
-                            Action::CursorEnd => {
-                                state.cursor_end();
-                            }
-                            Action::SendInput => {
-                                let input = state.take_input();
-                                if !input.is_empty() {
-                                    if let Some(agent) = state.selected_agent() {
-                                        let target = agent.target.clone();
-                                        // Send the input text
-                                        if let Err(e) = tmux_client.send_keys(&target, &input) {
-                                            state.set_error(format!("Failed to send input: {}", e));
-                                        } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {
-                                            state.set_error(format!("Failed to send Enter: {}", e));
-                                        }
-                                    }
-                                }
-                                // Stay in input mode for consecutive inputs
-                            }
                             Action::SidebarWider => {
                                 state.sidebar_width = (state.sidebar_width + 5).min(70);
                             }
@@ -451,26 +382,6 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         return Action::HideHelp;
     }
 
-    // If input panel is focused, handle input-specific keys
-    if state.is_input_focused() {
-        return match code {
-            // Esc moves focus back to sidebar
-            KeyCode::Esc => Action::FocusSidebar,
-            // Shift+Enter or Alt+Enter inserts newline
-            KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => Action::InputNewline,
-            KeyCode::Enter if modifiers.contains(KeyModifiers::ALT) => Action::InputNewline,
-            KeyCode::Enter => Action::SendInput,
-            KeyCode::Backspace => Action::InputBackspace,
-            // Cursor movement
-            KeyCode::Left => Action::CursorLeft,
-            KeyCode::Right => Action::CursorRight,
-            KeyCode::Home => Action::CursorHome,
-            KeyCode::End => Action::CursorEnd,
-            KeyCode::Char(c) => Action::InputChar(c),
-            _ => Action::None,
-        };
-    }
-
     // Sidebar focused
     match code {
         KeyCode::Char('q') => Action::Quit,
@@ -495,9 +406,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('k') | KeyCode::Up => Action::PrevAgent,
         KeyCode::Tab => Action::NextAgent,
 
-        // Left/Right arrows for focus navigation
-        KeyCode::Right => Action::FocusInput,
-        KeyCode::Left => Action::None, // Already on sidebar
+        // Left/Right arrows resize the sidebar
+        KeyCode::Right => Action::SidebarWider,
+        KeyCode::Left => Action::SidebarNarrower,
 
         // Multi-selection
         KeyCode::Char(' ') => Action::ToggleSelection,
