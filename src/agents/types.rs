@@ -331,7 +331,9 @@ impl MonitoredAgent {
     ///
     /// Claude Code keeps a one-line task description in the pane title,
     /// prefixed with a status icon (✳ when idle, ◐◓◑◒ while working).
-    /// Grok titles end with " - grok" and may prefix "Running: " while busy.
+    /// Grok titles end with " - grok"; while busy it rewrites them as
+    /// "<spinner> - <activity> - <task> - grok", and the activity segment is
+    /// dropped so the row stops changing every frame.
     /// Returns None when the title carries no useful summary (e.g. a
     /// shell-style path title).
     pub fn task_summary(&self) -> Option<String> {
@@ -345,18 +347,32 @@ impl MonitoredAgent {
             .trim()
             .to_string();
 
-        // Grok branding suffix in pane title
+        // Grok branding suffix in pane title. Busy titles are
+        // "<spinner> - <activity> - <task> - grok", where <activity> is a
+        // per-frame status ("Thinking", "Responding", "Waiting for response…",
+        // "Running: <tool>"). Idle titles are plain "<task> - grok", so the
+        // dash left over after the spinner is what marks a busy title.
         if let Some(stripped) = cleaned.strip_suffix(" - grok") {
-            cleaned = stripped.trim().to_string();
+            let rest = stripped.trim();
+            cleaned = match rest.strip_prefix('-') {
+                Some(busy) => match busy.trim().split_once(" - ") {
+                    // Drop the activity; the task itself may contain " - ".
+                    Some((_activity, task)) => task.trim().to_string(),
+                    // Busy before Grok has named the session — nothing stable
+                    // to show, so fall back to the pane path.
+                    None => return None,
+                },
+                None => rest.to_string(),
+            };
+        } else if cleaned.eq_ignore_ascii_case("grok") {
+            // Fresh Grok pane, before the session gets a name.
+            return None;
         }
 
-        // Strip leading dash/spinner residue and Grok "Running:" prefix
+        // Strip leading dash/spinner residue
         cleaned = cleaned
             .trim_start_matches(|c: char| c == '-' || c.is_whitespace())
             .to_string();
-        if let Some(stripped) = cleaned.strip_prefix("Running:") {
-            cleaned = stripped.trim().to_string();
-        }
 
         // Kiro CLI branding prefix. With `chat.terminalTitle` enabled it writes
         // "kiro: <session title>", falling back to "kiro: <cwd>" before the
@@ -428,11 +444,34 @@ mod tests {
             AgentType::Grok,
             1,
         );
+        // Busy titles carry a per-frame activity segment; only the task part
+        // is stable, so that is what the row shows.
         agent.title = "⠹ - Running: Read `/foo` - tmuxcc Grok detection - grok".to_string();
         assert_eq!(
             agent.task_summary().as_deref(),
-            Some("Read `/foo` - tmuxcc Grok detection")
+            Some("tmuxcc Grok detection")
         );
+        agent.title = "⠴ - Waiting for response… - Explain tmux pane titles - grok".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("Explain tmux pane titles")
+        );
+        agent.title = "⠙ - Responding - 서울 오늘·주말 날씨 예보 확인 - grok".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("서울 오늘·주말 날씨 예보 확인")
+        );
+        // A task name containing " - " survives the activity strip.
+        agent.title = "⠼ - Thinking - fix the parser - round two - grok".to_string();
+        assert_eq!(
+            agent.task_summary().as_deref(),
+            Some("fix the parser - round two")
+        );
+        // Busy before the session is named: nothing stable to show.
+        agent.title = "⠼ - Thinking - grok".to_string();
+        assert_eq!(agent.task_summary(), None);
+        agent.title = "grok".to_string();
+        assert_eq!(agent.task_summary(), None);
 
         agent.title = "Recent Downloads Top 15 by Modification … - grok".to_string();
         assert_eq!(
