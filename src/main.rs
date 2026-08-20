@@ -36,6 +36,11 @@ struct Cli {
     /// デフォルト設定ファイルを生成
     #[arg(long)]
     init_config: bool,
+
+    /// 起動元の tmux ペイン (例: %12) — カーソルの初期位置。
+    /// 省略時は現在アクティブなペイン (環境変数 TMUXCC_ORIGIN_PANE も可)
+    #[arg(long, value_name = "PANE")]
+    pane: Option<String>,
 }
 
 #[tokio::main]
@@ -92,6 +97,13 @@ async fn main() -> Result<()> {
     config.poll_interval_ms = cli.poll_interval;
     config.capture_lines = cli.capture_lines;
 
+    // The pane tmuxcc was launched from: the cursor starts on its agent
+    let origin_pane = cli.pane.or_else(|| {
+        std::env::var("TMUXCC_ORIGIN_PANE")
+            .ok()
+            .filter(|p| !p.is_empty())
+    });
+
     // Run the application
-    run_app(config).await
+    run_app(config, origin_pane).await
 }

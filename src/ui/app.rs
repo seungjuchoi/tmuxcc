@@ -28,7 +28,12 @@ use super::Layout;
 const WHEEL_STEP: usize = 3;
 
 /// Runs the main application loop
-pub async fn run_app(config: Config) -> Result<()> {
+///
+/// `origin_pane` is the pane tmuxcc was launched from (`%12`, `session:1.0`,
+/// ...); the cursor starts on the agent running there. When it is `None` the
+/// current client's active pane is used, which inside a tmux popup is still
+/// the pane the popup was opened from.
+pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -47,6 +52,12 @@ pub async fn run_app(config: Config) -> Result<()> {
     if !tmux_client.is_available() {
         state.set_error("tmux is not running".to_string());
     }
+
+    // Remember where we were opened from, so the cursor can start there.
+    // An explicit pane that tmux cannot resolve falls back to the active one.
+    state.origin_target = tmux_client
+        .resolve_pane_target(origin_pane.as_deref())
+        .or_else(|| tmux_client.resolve_pane_target(None));
 
     // Create channel for monitor updates
     let (tx, mut rx) = mpsc::channel(32);
@@ -162,6 +173,8 @@ async fn run_loop(
                 state.agents.root_agents.sort_by(|a, b| {
                     (a.session.as_str(), a.window, a.pane).cmp(&(b.session.as_str(), b.window, b.pane))
                 });
+                // On the first scan, start on the agent we were opened from
+                state.focus_origin_agent();
                 // Ensure selected index is valid
                 if state.selected_index >= state.agents.root_agents.len() {
                     state.selected_index = state.agents.root_agents.len().saturating_sub(1);

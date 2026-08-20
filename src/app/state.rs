@@ -132,6 +132,10 @@ pub struct AppState {
     last_tick: Instant,
     /// System resource statistics
     pub system_stats: SystemStats,
+    /// Target of the pane tmuxcc was launched from ("session:window.pane")
+    pub origin_target: Option<String>,
+    /// Whether the cursor still has to be moved onto the origin pane
+    origin_pending: bool,
 }
 
 impl AppState {
@@ -154,6 +158,8 @@ impl AppState {
             tick: 0,
             last_tick: Instant::now(),
             system_stats: SystemStats::new(),
+            origin_target: None,
+            origin_pending: true,
         }
     }
 
@@ -209,11 +215,36 @@ impl AppState {
         }
     }
 
+    /// Puts the cursor on the agent running in the pane tmuxcc was launched
+    /// from, so opening the popup from an agent starts on that agent.
+    ///
+    /// Only the first scan is used: after that the cursor belongs to the user.
+    pub fn focus_origin_agent(&mut self) {
+        if !self.origin_pending || self.agents.root_agents.is_empty() {
+            return;
+        }
+        self.origin_pending = false;
+
+        let Some(target) = self.origin_target.clone() else {
+            return;
+        };
+        if let Some(index) = self
+            .agents
+            .root_agents
+            .iter()
+            .position(|agent| agent.target == target)
+        {
+            self.select_agent(index);
+        }
+    }
+
     /// Resets view state that is tied to the agent under the cursor
     fn on_cursor_moved(&mut self) {
         // A different pane means a different buffer: go back to the live tail
         self.preview_scroll = 0;
         self.sidebar_follow_cursor = true;
+        // The user is driving now: never move the cursor to the origin pane
+        self.origin_pending = false;
     }
 
     /// Scrolls the preview towards older output
@@ -365,5 +396,62 @@ mod tests {
         assert_eq!(state.selected_index, 0); // Wraps around
         state.select_prev();
         assert_eq!(state.selected_index, 1); // Wraps around
+    }
+
+    #[test]
+    fn test_focus_origin_agent() {
+        let mut state = AppState::new();
+        state.agents.root_agents.push(MonitoredAgent::new(
+            "1".to_string(),
+            "main:0.0".to_string(),
+            "main".to_string(),
+            0,
+            "code".to_string(),
+            0,
+            "/home/user/project1".to_string(),
+            AgentType::ClaudeCode,
+            1000,
+        ));
+        state.agents.root_agents.push(MonitoredAgent::new(
+            "2".to_string(),
+            "main:0.1".to_string(),
+            "main".to_string(),
+            0,
+            "code".to_string(),
+            1,
+            "/home/user/project2".to_string(),
+            AgentType::OpenCode,
+            1001,
+        ));
+
+        state.origin_target = Some("main:0.1".to_string());
+        state.focus_origin_agent();
+        assert_eq!(state.selected_index, 1);
+
+        // Later scans leave the cursor where the user put it
+        state.select_prev();
+        state.focus_origin_agent();
+        assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_focus_origin_agent_without_a_match() {
+        let mut state = AppState::new();
+        state.agents.root_agents.push(MonitoredAgent::new(
+            "1".to_string(),
+            "main:0.0".to_string(),
+            "main".to_string(),
+            0,
+            "code".to_string(),
+            0,
+            "/home/user/project1".to_string(),
+            AgentType::ClaudeCode,
+            1000,
+        ));
+
+        // Launched from a pane with no agent in it: cursor stays at the top
+        state.origin_target = Some("main:9.9".to_string());
+        state.focus_origin_agent();
+        assert_eq!(state.selected_index, 0);
     }
 }

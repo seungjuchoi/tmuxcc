@@ -63,6 +63,33 @@ impl TmuxClient {
         Ok(panes)
     }
 
+    /// Resolves a pane spec (`%12`, `session:1.0`, ...) to the
+    /// `session:window.pane` target used everywhere else.
+    ///
+    /// With no spec, tmux reports the current client's active pane. Inside a
+    /// popup that is still the pane the popup was opened from, which is
+    /// exactly the pane we want the cursor on.
+    pub fn resolve_pane_target(&self, spec: Option<&str>) -> Option<String> {
+        let mut args = vec!["display-message", "-p"];
+        if let Some(spec) = spec {
+            args.push("-t");
+            args.push(spec);
+        }
+        args.push("#{session_name}:#{window_index}.#{pane_index}");
+
+        let output = Command::new("tmux").args(&args).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let target = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if target.is_empty() {
+            None
+        } else {
+            Some(target)
+        }
+    }
+
     /// Captures the content of a specific pane
     pub fn capture_pane(&self, target: &str) -> Result<String> {
         self.capture(target, false)
