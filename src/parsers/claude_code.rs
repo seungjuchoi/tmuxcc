@@ -36,6 +36,9 @@ pub struct ClaudeCodeParser {
     task_running_pattern: Regex,
     task_complete_pattern: Regex,
 
+    // Busy line printed above the input box while a turn is running
+    busy_pattern: Regex,
+
     // Auto-compact warning, which reports context *left*
     context_left_pattern: Regex,
     // Status-line pattern reporting context *used* (e.g. "ctx:44%")
@@ -80,6 +83,18 @@ impl ClaudeCodeParser {
                 r"(?m)[✓✔]\s*(\w+).*?(?:completed|finished|done|returned)"
             ).unwrap(),
 
+            // The line Claude Code redraws above the input box while a turn is
+            // running, e.g. "✳ Manifesting… (32s · ↓ 1.6k tokens)", which grows an
+            // "h"/"m" prefix on longer turns ("(3m 18s · ↓ 12.9k tokens)"), or
+            // "✻ Thinking… (esc to interrupt)". Once the turn ends the same slot
+            // reads "✻ Crunched for 36s" — past tense and, crucially, with no
+            // parenthesised timer — so the parentheses are what separate busy
+            // from done. The leading glyph is deliberately not matched: Claude
+            // Code cycles it (· ✢ ✳ ∗ ✻ ✽ …) and has changed the set before.
+            busy_pattern: Regex::new(
+                r"^\s*\S[^\n]*?\((?:((?:\d+h\s+)?(?:\d+m\s+)?\d+s)\b[^)]*|[^)]*esc to interrupt[^)]*)\)"
+            ).unwrap(),
+
             // Context *left* pattern (e.g., "Context left until auto-compact: 42%")
             context_left_pattern: Regex::new(
                 r"(?i)Context\s+(?:left|remaining).*?(\d+)%"
@@ -88,6 +103,31 @@ impl ClaudeCodeParser {
             // Context *used* as rendered by status lines (e.g., "ctx:44%")
             context_used_pattern: Regex::new(r"(?i)\bctx:\s*(\d{1,3})\s*%").unwrap(),
         }
+    }
+
+    /// Detect the "turn in progress" line near the bottom of the pane.
+    ///
+    /// Claude Code used to advertise this in the pane title with a spinner
+    /// glyph, which is what `monitor::task` watches for; current versions keep
+    /// the title fixed at `✳ <task summary>`, so the pane body is the only
+    /// remaining signal.
+    fn detect_busy(&self, content: &str) -> Option<AgentStatus> {
+        // A wide window, because a long draft in the input box can push the
+        // busy line well above the bottom of the pane.
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(40);
+
+        for line in lines[start..].iter().rev() {
+            if let Some(cap) = self.busy_pattern.captures(line) {
+                let activity = match cap.get(1) {
+                    Some(elapsed) => format!("Working… {}", elapsed.as_str()),
+                    None => "Working…".to_string(),
+                };
+                return Some(AgentStatus::Processing { activity });
+            }
+        }
+
+        None
     }
 
     fn detect_approval(&self, content: &str) -> Option<(ApprovalType, String)> {
@@ -397,9 +437,6 @@ impl AgentParser for ClaudeCodeParser {
     }
 
     fn parse_status(&self, content: &str) -> AgentStatus {
-        // Title-based spinner detection in monitor/task.rs handles Processing state.
-        // Here we only check for approval prompts, otherwise return Idle.
-
         // Check for approval prompts (highest priority)
         if let Some((approval_type, details)) = self.detect_approval(content) {
             return AgentStatus::AwaitingApproval {
@@ -408,7 +445,12 @@ impl AgentParser for ClaudeCodeParser {
             };
         }
 
-        // Default to Idle - title spinner detection will override to Processing if needed
+        // A running turn is read off the pane body; the title spinner check in
+        // monitor/task.rs stays as a fallback for older Claude Code builds.
+        if let Some(status) = self.detect_busy(content) {
+            return status;
+        }
+
         if content.trim().is_empty() {
             AgentStatus::Unknown
         } else {
@@ -559,6 +601,49 @@ mod tests {
             }
             _ => panic!("Expected AwaitingApproval status"),
         }
+    }
+
+    #[test]
+    fn test_busy_line_marks_processing() {
+        let parser = ClaudeCodeParser::new();
+
+        // Current Claude Code: gerund + elapsed timer + token counter.
+        let busy = "✽ Manifesting… (32s · ↓ 1.6k tokens)\n  ⎺  Tip: use /btw\n\n────\n❯ \n";
+        match parser.parse_status(busy) {
+            AgentStatus::Processing { activity } => assert_eq!(activity, "Working… 32s"),
+            other => panic!("expected Processing, got {:?}", other),
+        }
+
+        // Long turns grow minute (and hour) parts.
+        let long = "✢ Manifesting… (3m 18s · ↓ 12.9k tokens)\n❯ \n";
+        match parser.parse_status(long) {
+            AgentStatus::Processing { activity } => assert_eq!(activity, "Working… 3m 18s"),
+            other => panic!("expected Processing, got {:?}", other),
+        }
+
+        // Older phrasing without a timer.
+        let interrupt = "✻ Thinking… (esc to interrupt)\n❯ \n";
+        assert!(matches!(
+            parser.parse_status(interrupt),
+            AgentStatus::Processing { .. }
+        ));
+    }
+
+    #[test]
+    fn test_finished_turn_is_idle() {
+        let parser = ClaudeCodeParser::new();
+
+        // The same slot after the turn ends: past tense, no parenthesised timer.
+        let done =
+            "✻ Crunched for 36s\n\n────\n❯ \n────\n  ~/Documents/Code/tz | Opus 5 | ctx:6%\n";
+        assert!(
+            matches!(parser.parse_status(done), AgentStatus::Idle),
+            "a finished turn must not read as Processing"
+        );
+
+        // A tool call that merely mentions a duration is not a busy line.
+        let recap = "⏺ Bash(sleep 10s)\n❯ \n";
+        assert!(matches!(parser.parse_status(recap), AgentStatus::Idle));
     }
 
     #[test]
