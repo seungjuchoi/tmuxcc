@@ -421,11 +421,16 @@ impl AgentParser for ClaudeCodeParser {
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
         detection_strings.iter().any(|s| {
-            let lower = s.to_lowercase();
-            // Match by name
-            lower.contains("claude") || lower.contains("anthropic")
-            // Match by version number pattern (e.g., "2.1.11" as command)
-            || is_version_like(s)
+            let exe = super::executable_name(s).to_lowercase();
+            // Match by executable name. Arguments are ignored on purpose: a
+            // shell tool call such as `ls ~/.claude`, spawned by *another*
+            // agent, used to claim the pane from here.
+            exe == "claude"
+                || exe.starts_with("claude-")
+                || exe.starts_with("claude.")
+                || exe.contains("anthropic")
+                // Claude Code's pane_current_command is its version number
+                || is_version_like(&exe)
         })
     }
 
@@ -563,6 +568,20 @@ mod tests {
         // No match
         assert!(!parser.matches(&["opencode", "opencode"]));
         assert!(!parser.matches(&["fish", "fish"]));
+    }
+
+    #[test]
+    fn test_a_path_mention_is_not_the_executable() {
+        let parser = ClaudeCodeParser::new();
+        // Regression: Grok's shell tool runs these, and every one of them used
+        // to register the pane as Claude Code.
+        assert!(!parser.matches(&["ls ~/.claude/"]));
+        assert!(!parser.matches(&["ls ~/.claude"]));
+        assert!(!parser.matches(&["cat /Users/timer/.claude/settings.json"]));
+        assert!(!parser.matches(&["grep -r claude ."]));
+        assert!(!parser.matches(&["/bin/bash -O extglob -c ls ~/.claude"]));
+        // The real binary, wherever it lives, still matches.
+        assert!(parser.matches(&["/Users/timer/.claude/local/claude --resume"]));
     }
 
     #[test]

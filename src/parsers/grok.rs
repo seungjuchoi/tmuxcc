@@ -63,10 +63,11 @@ impl AgentParser for GrokParser {
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
         detection_strings.iter().any(|s| {
-            let lower = s.to_lowercase();
-            // Process / cmdline: "grok", "grok --always-approve"
-            // Truncated pane command: "grok-1.0.3-maco"
-            lower.contains("grok")
+            // Executable only, so a command that merely mentions grok
+            // (`ls ~/.grok`) does not register a pane as an agent.
+            // Covers "grok", "grok --always-approve" and the truncated pane
+            // command "grok-1.0.3-maco".
+            super::executable_name(s).to_lowercase().starts_with("grok")
         })
     }
 

@@ -26,6 +26,16 @@ pub(crate) fn safe_tail(s: &str, max_chars: usize) -> &str {
     &s[byte_idx..]
 }
 
+/// The executable a detection string runs: the basename of its argv[0].
+///
+/// Arguments are deliberately dropped. An agent's shell tool call arrives here
+/// as a full command line, and matching on the whole string made `ls ~/.claude`
+/// look like Claude Code — the executable is `ls`.
+pub(crate) fn executable_name(detection_string: &str) -> &str {
+    let argv0 = detection_string.split_whitespace().next().unwrap_or("");
+    argv0.rsplit('/').next().unwrap_or(argv0)
+}
+
 /// Trait for parsing agent output
 pub trait AgentParser: Send + Sync {
     /// Returns the name of the agent
@@ -38,6 +48,10 @@ pub trait AgentParser: Send + Sync {
     /// cmdline, child commands) match this agent.
     ///
     /// The pane title is **not** included — see [`PaneInfo::process_strings`].
+    ///
+    /// Match on the *executable* ([`executable_name`]), not on arguments: the
+    /// registry feeds this the full command line of every descendant process,
+    /// tool calls included.
     fn matches(&self, detection_strings: &[&str]) -> bool;
 
     /// Fallback: recognises the agent from its pane-title branding alone.
@@ -109,11 +123,19 @@ impl ParserRegistry {
     /// title naming another agent must never outrank the process actually
     /// running in the pane.
     pub fn find_parser_for_pane(&self, pane: &PaneInfo) -> Option<&dyn AgentParser> {
-        let process_strings = pane.process_strings();
+        // Nearest-to-the-pane wins. `process_strings` is ordered by depth, and
+        // an agent's tool calls always sit below the agent itself, so the first
+        // command any parser recognises is the agent that owns the pane —
+        // never a `claude`/`grok` the agent merely invoked.
+        for candidate in pane.process_strings() {
+            if let Some(parser) = self.parsers.iter().find(|p| p.matches(&[candidate])) {
+                return Some(parser.as_ref());
+            }
+        }
+
         self.parsers
             .iter()
-            .find(|p| p.matches(&process_strings))
-            .or_else(|| self.parsers.iter().find(|p| p.matches_title(&pane.title)))
+            .find(|p| p.matches_title(&pane.title))
             .map(|p| p.as_ref())
     }
 
@@ -263,6 +285,80 @@ mod tests {
         };
         assert!(registry
             .find_parser_for_pane(&shell_titled_claude)
+            .is_none());
+    }
+
+    /// Regression (reproduced live on a `grok --always-approve` pane): the
+    /// moment Grok ran a shell tool whose command line mentioned `~/.claude`,
+    /// the pane flipped to Claude Code. An agent's own tool calls must never
+    /// out-rank the agent, so `process_strings` is ordered by depth and the
+    /// nearest recognised command wins.
+    #[test]
+    fn test_a_tool_call_does_not_steal_the_pane_from_its_agent() {
+        let registry = ParserRegistry::new();
+
+        let grok_running_a_shell_tool = PaneInfo {
+            session: "Dog-detection".to_string(),
+            window: 1,
+            window_name: "grok".to_string(),
+            pane: 1,
+            command: "grok-1.0.5-maco".to_string(),
+            title: "\u{27e8}task\u{27e9} - grok".to_string(),
+            path: "/Users/timer/Documents/Code/tz".to_string(),
+            pid: 6316,
+            cmdline: "-fish".to_string(),
+            // Depth order: grok first, then what grok spawned.
+            child_commands: vec![
+                "grok --always-approve".to_string(),
+                "grok".to_string(),
+                "/bin/bash -O extglob -c ls ~/.claude/ | head -3".to_string(),
+                "bash".to_string(),
+            ],
+        };
+        let parser = registry
+            .find_parser_for_pane(&grok_running_a_shell_tool)
+            .expect("should detect Grok");
+        assert_eq!(parser.agent_type(), crate::agents::AgentType::Grok);
+
+        // And the mirror: Claude Code shelling out to `grok -p` stays Claude.
+        let claude_shelling_out_to_grok = PaneInfo {
+            session: "main".to_string(),
+            window: 3,
+            window_name: "tz".to_string(),
+            pane: 1,
+            command: "2.1.238".to_string(),
+            title: "\u{2733} compare the agents".to_string(),
+            path: "/Users/timer/Documents/Code/tz".to_string(),
+            pid: 7788,
+            cmdline: "-fish".to_string(),
+            child_commands: vec![
+                "claude --dangerously-skip-permissions".to_string(),
+                "claude".to_string(),
+                "grok -p \"summarise this\"".to_string(),
+                "grok".to_string(),
+            ],
+        };
+        let parser = registry
+            .find_parser_for_pane(&claude_shelling_out_to_grok)
+            .expect("should detect Claude Code");
+        assert_eq!(parser.agent_type(), crate::agents::AgentType::ClaudeCode);
+
+        // A plain shell where the user simply listed the config directory is
+        // still not an agent.
+        let shell_listing_the_config_dir = PaneInfo {
+            session: "lupa".to_string(),
+            window: 3,
+            window_name: "lupa".to_string(),
+            pane: 1,
+            command: "ls".to_string(),
+            title: "~/D/C/t/lupa_ed_mac".to_string(),
+            path: "/Users/timer/Documents/Code/tz/lupa_ed_mac".to_string(),
+            pid: 9911,
+            cmdline: "-fish".to_string(),
+            child_commands: vec!["ls -la /Users/timer/.claude".to_string(), "ls".to_string()],
+        };
+        assert!(registry
+            .find_parser_for_pane(&shell_listing_the_config_dir)
             .is_none());
     }
 

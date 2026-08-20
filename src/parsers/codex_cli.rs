@@ -39,8 +39,11 @@ impl AgentParser for CodexCliParser {
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
         detection_strings.iter().any(|s| {
-            let lower = s.to_lowercase();
-            lower.contains("codex") || lower.contains("openai")
+            // Executable only: the surrounding shell environment mentions
+            // agents it is not (a Claude Code tool call exports
+            // CODEX_COMPANION_SESSION_ID, for instance).
+            let exe = super::executable_name(s).to_lowercase();
+            exe.starts_with("codex") || exe.contains("openai")
         })
     }
 

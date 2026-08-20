@@ -39,8 +39,10 @@ impl AgentParser for GeminiCliParser {
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
         detection_strings.iter().any(|s| {
-            let lower = s.to_lowercase();
-            lower.contains("gemini") || lower.contains("google")
+            // Executable only, so a path or env var that merely names the
+            // vendor does not register a pane as an agent.
+            let exe = super::executable_name(s).to_lowercase();
+            exe.contains("gemini") || exe.contains("google")
         })
     }
 

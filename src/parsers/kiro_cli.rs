@@ -303,9 +303,11 @@ impl AgentParser for KiroCliParser {
     }
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
+        // Executable only: a command that merely names a Kiro binary
+        // (`which kiro-cli`) is a tool call, not a chat session.
         detection_strings
             .iter()
-            .any(|s| s.split_whitespace().any(is_kiro_binary))
+            .any(|s| is_kiro_binary(super::executable_name(s)))
     }
 
     fn parse_status(&self, content: &str) -> AgentStatus {

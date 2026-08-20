@@ -1,5 +1,5 @@
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -47,40 +47,49 @@ impl ProcessTreeCache {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         for line in stdout.lines() {
-            let parts: Vec<&str> = line.trim().splitn(3, char::is_whitespace).collect();
-            if parts.len() >= 3 {
-                if let (Ok(pid), Ok(ppid)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                    let cmd = parts[2].trim().to_string();
-                    let parent = if ppid == 0 { None } else { Some(ppid) };
-                    self.processes.insert(
-                        pid,
-                        ProcessInfo {
-                            command: cmd,
-                            parent_pid: parent,
-                        },
-                    );
-                }
+            if let Some((pid, ppid, command)) = parse_ps_line(line) {
+                let parent = if ppid == 0 { None } else { Some(ppid) };
+                self.processes.insert(
+                    pid,
+                    ProcessInfo {
+                        command,
+                        parent_pid: parent,
+                    },
+                );
             }
         }
 
         self.last_update = Instant::now();
     }
 
+    /// Descendant commands of `pid`, **breadth-first**.
+    ///
+    /// The ordering is load-bearing: an agent's own tool calls are always
+    /// deeper in the tree than the agent process itself, and
+    /// `ParserRegistry::find_parser_for_pane` takes the first command it
+    /// recognises. Depth-first ordering let a shell command spawned by Grok
+    /// (`ls ~/.claude`) be examined before `grok` itself and hand the pane to
+    /// the Claude Code parser.
     fn get_child_commands(&self, pid: u32, max_depth: u32) -> Vec<String> {
         let mut commands = Vec::new();
-        self.collect_children(pid, &mut commands, 0, max_depth);
-        commands
-    }
+        let mut frontier: HashSet<u32> = HashSet::from([pid]);
 
-    fn collect_children(&self, pid: u32, commands: &mut Vec<String>, depth: u32, max_depth: u32) {
-        if depth >= max_depth {
-            return;
-        }
+        for _ in 0..max_depth {
+            // Sorted by pid so the order does not vary with HashMap iteration.
+            let mut level: Vec<(u32, &ProcessInfo)> = self
+                .processes
+                .iter()
+                .filter(|(_, info)| info.parent_pid.is_some_and(|p| frontier.contains(&p)))
+                .map(|(&child_pid, info)| (child_pid, info))
+                .collect();
+            level.sort_unstable_by_key(|(child_pid, _)| *child_pid);
 
-        // Find all processes with this pid as parent
-        for (&child_pid, info) in &self.processes {
-            if info.parent_pid == Some(pid) {
-                // Add full command
+            if level.is_empty() {
+                break;
+            }
+
+            let mut next = HashSet::with_capacity(level.len());
+            for (child_pid, info) in level {
                 commands.push(info.command.clone());
                 // Add base name
                 if let Some(first) = info.command.split_whitespace().next() {
@@ -90,15 +99,34 @@ impl ProcessTreeCache {
                         }
                     }
                 }
-                // Recurse
-                self.collect_children(child_pid, commands, depth + 1, max_depth);
+                next.insert(child_pid);
             }
+            frontier = next;
         }
+
+        commands
     }
 
     fn get_cmdline(&self, pid: u32) -> Option<String> {
         self.processes.get(&pid).map(|info| info.command.clone())
     }
+}
+
+/// Parses one `ps -A -o pid=,ppid=,command=` line into (pid, ppid, command).
+///
+/// `ps` right-aligns the numeric columns, so the gap between them is one *or
+/// more* spaces. Splitting on a whitespace predicate does not collapse those
+/// runs — it yielded an empty ppid field and the whole process was dropped,
+/// which silently emptied the child list for any pane whose ppid was shorter
+/// than the widest pid on the system.
+fn parse_ps_line(line: &str) -> Option<(u32, u32, String)> {
+    let (pid, rest) = line.trim_start().split_once(char::is_whitespace)?;
+    let (ppid, command) = rest.trim_start().split_once(char::is_whitespace)?;
+    let command = command.trim();
+    if command.is_empty() {
+        return None;
+    }
+    Some((pid.parse().ok()?, ppid.parse().ok()?, command.to_string()))
 }
 
 static PROCESS_CACHE: OnceLock<Mutex<ProcessTreeCache>> = OnceLock::new();
@@ -218,6 +246,28 @@ impl fmt::Display for PaneInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_ps_line_tolerates_column_padding() {
+        // Real `ps` output: the pid column is right-aligned to the widest pid,
+        // so a 5-digit pid with a 4-digit ppid leaves *two* spaces.
+        assert_eq!(
+            parse_ps_line("62879  6316 grok --always-approve"),
+            Some((62879, 6316, "grok --always-approve".to_string()))
+        );
+        assert_eq!(
+            parse_ps_line(" 6316 17890 -fish"),
+            Some((6316, 17890, "-fish".to_string()))
+        );
+        // Arguments keep their own spacing.
+        assert_eq!(
+            parse_ps_line("  501     1 /usr/bin/foo  -a   -b"),
+            Some((501, 1, "/usr/bin/foo  -a   -b".to_string()))
+        );
+        assert_eq!(parse_ps_line(""), None);
+        assert_eq!(parse_ps_line("garbage line"), None);
+        assert_eq!(parse_ps_line("123 456"), None);
+    }
 
     #[test]
     fn test_target() {

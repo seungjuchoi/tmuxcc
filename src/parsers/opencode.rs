@@ -41,8 +41,9 @@ impl AgentParser for OpenCodeParser {
 
     fn matches(&self, detection_strings: &[&str]) -> bool {
         detection_strings.iter().any(|s| {
-            let lower = s.to_lowercase();
-            lower.contains("opencode") || lower.contains("open-code")
+            // Executable only — see the note in the Claude Code parser.
+            let exe = super::executable_name(s).to_lowercase();
+            exe.contains("opencode") || exe.contains("open-code")
         })
     }
 
