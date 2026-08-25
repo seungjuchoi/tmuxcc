@@ -38,7 +38,7 @@ impl TmuxClient {
                 "list-panes",
                 "-a",
                 "-F",
-                "#{session_attached}\t#{session_name}:#{window_index}.#{pane_index}\t#{window_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}",
+                "#{session_attached}\t#{session_name}:#{window_index}.#{pane_index}\t#{window_name}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}\t#{pane_id}",
             ])
             .output()
             .context("Failed to execute tmux list-panes")?;
@@ -61,6 +61,28 @@ impl TmuxClient {
             .collect();
 
         Ok(panes)
+    }
+
+    /// Lists the ids (`%12`) of every pane on the server, agent or not.
+    ///
+    /// Used to drop persisted per-pane state whose pane no longer exists.
+    pub fn list_pane_ids(&self) -> Result<Vec<String>> {
+        let output = Command::new("tmux")
+            .args(["list-panes", "-a", "-F", "#{pane_id}"])
+            .output()
+            .context("Failed to execute tmux list-panes")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("tmux list-panes failed: {}", stderr);
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect())
     }
 
     /// Resolves a pane spec (`%12`, `session:1.0`, ...) to the

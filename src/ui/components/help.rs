@@ -73,30 +73,33 @@ impl HelpWidget {
                 Span::styled("Scrolls whatever is under the pointer", desc_style),
             ]),
             Line::from(vec![]),
-            Line::from(vec![Span::styled("Selection", section_style)]),
+            Line::from(vec![Span::styled("Hiding", section_style)]),
             Line::from(vec![]),
             Line::from(vec![
                 Span::styled("  Space    ", key_style),
-                Span::styled("Toggle selection of current agent", desc_style),
+                Span::styled("Hide agent (dim list at the bottom) / unhide", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  Ctrl+a   ", key_style),
-                Span::styled("Select all agents", desc_style),
+                Span::styled("           ", key_style),
+                Span::styled(
+                    "Hidden agents keep no number; reach them with j/k",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("  Esc      ", key_style),
-                Span::styled("Clear selection / Close subagent log", desc_style),
+                Span::styled("Close subagent log / quit", desc_style),
             ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("Actions", section_style)]),
             Line::from(vec![]),
             Line::from(vec![
                 Span::styled("  y / Y    ", key_style),
-                Span::styled("Approve pending request(s)", desc_style),
+                Span::styled("Approve pending request", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  n / N    ", key_style),
-                Span::styled("Reject pending request(s)", desc_style),
+                Span::styled("Reject pending request", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  a / A    ", key_style),

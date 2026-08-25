@@ -7,15 +7,11 @@ pub enum Action {
     NextAgent,
     /// Navigate to previous agent
     PrevAgent,
-    /// Toggle selection of current agent
-    ToggleSelection,
-    /// Select all agents
-    SelectAll,
-    /// Clear selection
-    ClearSelection,
-    /// Approve the current/selected request(s)
+    /// Park the current agent in the dim hidden section, or bring it back
+    ToggleHidden,
+    /// Approve the current agent's pending request
     Approve,
-    /// Reject the current/selected request(s)
+    /// Reject the current agent's pending request
     Reject,
     /// Approve all pending requests
     ApproveAll,
@@ -62,11 +58,9 @@ impl Action {
             Action::Quit => "Quit application",
             Action::NextAgent => "Select next agent",
             Action::PrevAgent => "Select previous agent",
-            Action::ToggleSelection => "Toggle selection",
-            Action::SelectAll => "Select all agents",
-            Action::ClearSelection => "Clear selection",
-            Action::Approve => "Approve selected request(s)",
-            Action::Reject => "Reject selected request(s)",
+            Action::ToggleHidden => "Hide / unhide current agent",
+            Action::Approve => "Approve pending request",
+            Action::Reject => "Reject pending request",
             Action::ApproveAll => "Approve all pending requests",
             Action::JumpToPane => "Jump to selected pane and quit",
             Action::ToggleSubagentLog => "Toggle subagent log",

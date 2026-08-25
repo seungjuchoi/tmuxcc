@@ -166,6 +166,9 @@ pub struct PaneInfo {
     pub cmdline: String,
     /// Child process commands (for detecting running agents)
     pub child_commands: Vec<String>,
+    /// Stable tmux pane id (`%12`). Unlike the index it survives window and
+    /// pane reordering, so it is the key for anything persisted across runs.
+    pub pane_id: String,
 }
 
 impl PaneInfo {
@@ -175,7 +178,7 @@ impl PaneInfo {
     }
 
     /// Parses a pane info from tmux list-panes output
-    /// Expected format: "session:window.pane\twindow_name\tcommand\tpid\ttitle\tpath"
+    /// Expected format: "session:window.pane\twindow_name\tcommand\tpid\ttitle\tpath[\tpane_id]"
     pub fn parse(line: &str) -> Option<Self> {
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() < 6 {
@@ -188,6 +191,7 @@ impl PaneInfo {
         let pid: u32 = parts[3].parse().ok()?;
         let title = parts[4].to_string();
         let path = parts[5].to_string();
+        let pane_id = parts.get(6).map(|s| s.to_string()).unwrap_or_default();
 
         // Parse target "session:window.pane"
         let (session, rest) = target.split_once(':')?;
@@ -214,6 +218,7 @@ impl PaneInfo {
             pid,
             cmdline,
             child_commands,
+            pane_id,
         })
     }
 
@@ -282,6 +287,7 @@ mod tests {
             pid: 99999,
             cmdline: "".to_string(),
             child_commands: Vec::new(),
+            pane_id: String::new(),
         };
         assert_eq!(pane.target(), "dev:2.3");
     }
@@ -305,6 +311,7 @@ mod tests {
             pid: 1234,
             cmdline: "-zsh".to_string(),
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
+            pane_id: String::new(),
         };
         let strings = pane.process_strings();
         assert!(strings.contains(&"zsh"));

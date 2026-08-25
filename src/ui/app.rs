@@ -43,6 +43,7 @@ pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> 
 
     // Initialize state
     let mut state = AppState::new();
+    state.hidden = crate::app::HiddenPanes::load();
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -51,6 +52,19 @@ pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> 
     // Check if tmux is available
     if !tmux_client.is_available() {
         state.set_error("tmux is not running".to_string());
+    }
+
+    // Forget hidden panes that no longer exist (pruned against *all* panes,
+    // not just agent panes, so a restarting agent stays hidden)
+    if let Ok(pane_ids) = tmux_client.list_pane_ids() {
+        if state
+            .hidden
+            .retain_existing(pane_ids.iter().map(String::as_str))
+        {
+            if let Err(e) = state.hidden.save() {
+                state.set_error(format!("Failed to save hidden list: {}", e));
+            }
+        }
     }
 
     // Remember where we were opened from, so the cursor can start there.
@@ -167,21 +181,13 @@ async fn run_loop(
         tokio::select! {
             // Handle monitor updates
             Some(update) = rx.recv() => {
-                state.agents = update.agents;
-                // Keep list order identical to the rendered tree (session/window/pane),
-                // so j/k navigation and the 1-9 jump numbers match what is displayed.
-                state.agents.root_agents.sort_by(|a, b| {
-                    (a.session.as_str(), a.window, a.pane).cmp(&(b.session.as_str(), b.window, b.pane))
-                });
+                // Keeps the list ordered like the rendered tree (visible agents
+                // by session/window/pane, hidden ones last), so j/k navigation
+                // and the 1-9 jump numbers match what is displayed, and keeps
+                // the cursor on the same agent.
+                state.replace_agents(update.agents);
                 // On the first scan, start on the agent we were opened from
                 state.focus_origin_agent();
-                // Ensure selected index is valid
-                if state.selected_index >= state.agents.root_agents.len() {
-                    state.selected_index = state.agents.root_agents.len().saturating_sub(1);
-                }
-                // Clean up invalid selections
-                let max_idx = state.agents.root_agents.len();
-                state.selected_agents.retain(|&idx| idx < max_idx);
             }
 
             // Handle keyboard and mouse events
@@ -242,52 +248,34 @@ async fn run_loop(
                             Action::PrevAgent => {
                                 state.select_prev();
                             }
-                            Action::ToggleSelection => {
-                                state.toggle_selection();
-                            }
-                            Action::SelectAll => {
-                                state.select_all();
-                            }
-                            Action::ClearSelection => {
-                                state.clear_selection();
+                            Action::ToggleHidden => {
+                                if let Err(e) = state.toggle_hidden() {
+                                    state.set_error(e);
+                                }
                             }
                             Action::Approve => {
-                                let indices = state.get_operation_indices();
-                                for idx in indices {
-                                    if let Some(agent) = state.agents.get_agent(idx) {
-                                        if agent.status.needs_attention() {
-                                            let target = agent.target.clone();
-                                            if let Err(e) = tmux_client.send_keys(&target, "y") {
-                                                state.set_error(format!("Failed to approve: {}", e));
-                                                break;
-                                            }
-                                            if let Err(e) = tmux_client.send_keys(&target, "Enter") {
-                                                state.set_error(format!("Failed to send Enter: {}", e));
-                                                break;
-                                            }
+                                if let Some(agent) = state.selected_agent() {
+                                    if agent.status.needs_attention() {
+                                        let target = agent.target.clone();
+                                        if let Err(e) = tmux_client.send_keys(&target, "y") {
+                                            state.set_error(format!("Failed to approve: {}", e));
+                                        } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {
+                                            state.set_error(format!("Failed to send Enter: {}", e));
                                         }
                                     }
                                 }
-                                state.clear_selection();
                             }
                             Action::Reject => {
-                                let indices = state.get_operation_indices();
-                                for idx in indices {
-                                    if let Some(agent) = state.agents.get_agent(idx) {
-                                        if agent.status.needs_attention() {
-                                            let target = agent.target.clone();
-                                            if let Err(e) = tmux_client.send_keys(&target, "n") {
-                                                state.set_error(format!("Failed to reject: {}", e));
-                                                break;
-                                            }
-                                            if let Err(e) = tmux_client.send_keys(&target, "Enter") {
-                                                state.set_error(format!("Failed to send Enter: {}", e));
-                                                break;
-                                            }
+                                if let Some(agent) = state.selected_agent() {
+                                    if agent.status.needs_attention() {
+                                        let target = agent.target.clone();
+                                        if let Err(e) = tmux_client.send_keys(&target, "n") {
+                                            state.set_error(format!("Failed to reject: {}", e));
+                                        } else if let Err(e) = tmux_client.send_keys(&target, "Enter") {
+                                            state.set_error(format!("Failed to send Enter: {}", e));
                                         }
                                     }
                                 }
-                                state.clear_selection();
                             }
                             Action::ApproveAll => {
                                 for agent in &state.agents.root_agents {
@@ -423,19 +411,24 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Right => Action::SidebarWider,
         KeyCode::Left => Action::SidebarNarrower,
 
-        // Multi-selection
-        KeyCode::Char(' ') => Action::ToggleSelection,
-        KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => Action::SelectAll,
+        // Space parks the agent under the cursor in the dim hidden section
+        // at the bottom (or brings it back)
+        KeyCode::Char(' ') => Action::ToggleHidden,
 
         // Approval
         KeyCode::Char('y') | KeyCode::Char('Y') => Action::Approve,
         KeyCode::Char('n') | KeyCode::Char('N') => Action::Reject,
         KeyCode::Char('a') | KeyCode::Char('A') => Action::ApproveAll,
 
-        // Number keys jump the cursor to the Nth agent in the list (1-based)
+        // Number keys jump the cursor to the Nth agent in the list (1-based).
+        // Only the main list is numbered; hidden agents are reached with j/k.
         KeyCode::Char(c @ '1'..='9') => {
             let idx = c.to_digit(10).unwrap() as usize - 1;
-            Action::SelectAgent(idx)
+            if idx < state.visible_count() {
+                Action::SelectAgent(idx)
+            } else {
+                Action::None
+            }
         }
 
         // Enter jumps to the selected pane and closes tmuxcc
@@ -450,11 +443,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         KeyCode::Char('h') | KeyCode::Char('?') => Action::ShowHelp,
 
-        // Esc cancels selection/log first; with nothing to cancel it quits like 'q'
+        // Esc closes the subagent log first; with nothing to close it quits like 'q'
         KeyCode::Esc => {
-            if !state.selected_agents.is_empty() {
-                Action::ClearSelection
-            } else if state.show_subagent_log {
+            if state.show_subagent_log {
                 Action::ToggleSubagentLog
             } else {
                 Action::Quit

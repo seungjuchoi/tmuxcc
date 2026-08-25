@@ -171,6 +171,7 @@ mod tests {
             pid: 1234,
             cmdline: "/usr/bin/claude".to_string(),
             child_commands: Vec::new(),
+            pane_id: String::new(),
         };
         assert!(registry.find_parser_for_pane(&claude_pane).is_some());
 
@@ -185,6 +186,7 @@ mod tests {
             pid: 1235,
             cmdline: "opencode".to_string(),
             child_commands: Vec::new(),
+            pane_id: String::new(),
         };
         assert!(registry.find_parser_for_pane(&opencode_pane).is_some());
 
@@ -200,6 +202,7 @@ mod tests {
             pid: 1236,
             cmdline: "-zsh".to_string(),
             child_commands: vec!["claude -c".to_string(), "claude".to_string()],
+            pane_id: String::new(),
         };
         assert!(registry.find_parser_for_pane(&child_claude_pane).is_some());
 
@@ -215,6 +218,7 @@ mod tests {
             pid: 1237,
             cmdline: "grok --always-approve".to_string(),
             child_commands: Vec::new(),
+            pane_id: String::new(),
         };
         let grok_parser = registry
             .find_parser_for_pane(&grok_pane)
@@ -241,6 +245,7 @@ mod tests {
             pid: 64479,
             cmdline: "fish".to_string(),
             child_commands: vec!["grok --always-approve".to_string(), "grok".to_string()],
+            pane_id: String::new(),
         };
         let parser = registry
             .find_parser_for_pane(&grok_pane_titled_claude)
@@ -264,6 +269,7 @@ mod tests {
                 "kiro-cli chat --trust-all-tools --v3".to_string(),
                 "kiro-cli".to_string(),
             ],
+            pane_id: String::new(),
         };
         let parser = registry
             .find_parser_for_pane(&kiro_pane_titled_grok)
@@ -282,6 +288,7 @@ mod tests {
             pid: 90915,
             cmdline: "fish (kiro-cli-term)".to_string(),
             child_commands: vec!["fish".to_string()],
+            pane_id: String::new(),
         };
         assert!(registry
             .find_parser_for_pane(&shell_titled_claude)
@@ -314,6 +321,7 @@ mod tests {
                 "/bin/bash -O extglob -c ls ~/.claude/ | head -3".to_string(),
                 "bash".to_string(),
             ],
+            pane_id: String::new(),
         };
         let parser = registry
             .find_parser_for_pane(&grok_running_a_shell_tool)
@@ -337,6 +345,7 @@ mod tests {
                 "grok -p \"summarise this\"".to_string(),
                 "grok".to_string(),
             ],
+            pane_id: String::new(),
         };
         let parser = registry
             .find_parser_for_pane(&claude_shelling_out_to_grok)
@@ -356,6 +365,7 @@ mod tests {
             pid: 9911,
             cmdline: "-fish".to_string(),
             child_commands: vec!["ls -la /Users/timer/.claude".to_string(), "ls".to_string()],
+            pane_id: String::new(),
         };
         assert!(registry
             .find_parser_for_pane(&shell_listing_the_config_dir)
@@ -379,6 +389,7 @@ mod tests {
             pid: 4242,
             cmdline: "ssh build-box".to_string(),
             child_commands: Vec::new(),
+            pane_id: String::new(),
         };
         let parser = registry
             .find_parser_for_pane(&remote_claude)
@@ -410,6 +421,7 @@ mod tests {
                 "/Users/timer/.local/bin/kiro-cli-chat chat --trust-all-tools --v3".to_string(),
                 "kiro-cli-chat".to_string(),
             ],
+            pane_id: String::new(),
         };
         let kiro_parser = registry
             .find_parser_for_pane(&kiro_pane)
@@ -432,6 +444,7 @@ mod tests {
                 "/opt/homebrew/Cellar/fish/4.8.1/bin/fish --login".to_string(),
                 "fish".to_string(),
             ],
+            pane_id: String::new(),
         };
         assert!(
             registry.find_parser_for_pane(&bare_shell).is_none(),
@@ -455,6 +468,7 @@ mod tests {
                 "claude --dangerously-skip-permissions".to_string(),
                 "claude".to_string(),
             ],
+            pane_id: String::new(),
         };
         let claude_parser = registry
             .find_parser_for_pane(&claude_under_kiro)

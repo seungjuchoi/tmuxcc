@@ -41,10 +41,10 @@ struct SessionWindowTree<'a> {
 }
 
 impl<'a> SessionWindowTree<'a> {
-    fn new(agents: &'a [MonitoredAgent]) -> Self {
+    fn new(agents: impl IntoIterator<Item = (usize, &'a MonitoredAgent)>) -> Self {
         let mut sessions: SessionsMap<'a> = BTreeMap::new();
 
-        for (idx, agent) in agents.iter().enumerate() {
+        for (idx, agent) in agents {
             sessions
                 .entry(&agent.session)
                 .or_default()
@@ -80,15 +80,14 @@ impl<'a> Rows<'a> {
 
 impl AgentTreeWidget {
     pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
+        // Pending/subagent counts include hidden agents on purpose: parking an
+        // agent must not make its approval requests disappear.
         let active_count = state.agents.active_count();
         let subagent_count = state.agents.running_subagent_count();
-        let selected_count = state.selected_agents.len();
-        let agent_count = state.agents.root_agents.len();
+        let agent_count = state.visible_count();
 
         // Build title
-        let title = if selected_count > 0 {
-            format!(" {} sel │ {} pending ", selected_count, active_count)
-        } else if subagent_count > 0 {
+        let title = if subagent_count > 0 {
             format!(" {} pending │ {} subs ", active_count, subagent_count)
         } else if active_count > 0 {
             format!(" ⚠ {} pending ", active_count)
@@ -102,7 +101,7 @@ impl AgentTreeWidget {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan));
 
-        if agent_count == 0 {
+        if state.agents.root_agents.is_empty() {
             let empty_text = List::new(vec![ListItem::new(Line::from(vec![Span::styled(
                 "  No agents detected",
                 Style::default().fg(Color::DarkGray),
@@ -122,7 +121,10 @@ impl AgentTreeWidget {
 
         {
             let agents = &state.agents.root_agents;
-            let tree = SessionWindowTree::new(agents);
+            // The list is sorted hidden-last, so the main tree is the first
+            // `visible_count` agents and the rest go to the hidden section.
+            let visible_count = state.visible_count();
+            let tree = SessionWindowTree::new(agents.iter().enumerate().take(visible_count));
             let mut rows = Rows::default();
             let available_width = area.width.saturating_sub(4) as usize;
             // First and last row of the block belonging to the cursor
@@ -152,19 +154,10 @@ impl AgentTreeWidget {
 
                     for (original_idx, agent) in window_agents.iter() {
                         let is_cursor = *original_idx == state.selected_index;
-                        let is_selected = state.is_multi_selected(*original_idx);
                         let owner = Some(*original_idx);
                         let block_start = rows.len();
 
-                        let select_indicator = if is_selected && is_cursor {
-                            "┃☑"
-                        } else if is_selected {
-                            " ☑"
-                        } else if is_cursor {
-                            "┃ "
-                        } else {
-                            "  "
-                        };
+                        let cursor_indicator = if is_cursor { "┃ " } else { "  " };
                         // Continuation marker so the cursor block reads as one unit
                         let cont_indicator = if is_cursor { "┃" } else { " " };
                         let detail_prefix = format!("{}{}", cont_indicator, DETAIL_INDENT);
@@ -197,8 +190,6 @@ impl AgentTreeWidget {
 
                         let item_style = if is_cursor {
                             Style::default().bg(Color::Rgb(50, 50, 70))
-                        } else if is_selected {
-                            Style::default().bg(Color::Rgb(35, 35, 50))
                         } else {
                             Style::default()
                         };
@@ -218,14 +209,7 @@ impl AgentTreeWidget {
                             .task_summary()
                             .unwrap_or_else(|| agent.abbreviated_path());
                         let line = Line::from(vec![
-                            Span::styled(
-                                select_indicator,
-                                if is_selected {
-                                    Style::default().fg(Color::Cyan)
-                                } else {
-                                    Style::default().fg(Color::White)
-                                },
-                            ),
+                            Span::styled(cursor_indicator, Style::default().fg(Color::White)),
                             Span::raw(AGENT_INDENT),
                             Span::styled(format!("{:>2} ", number), number_style),
                             Span::styled(status_char, status_style),
@@ -444,6 +428,70 @@ impl AgentTreeWidget {
                         if is_cursor {
                             cursor_span = Some((block_start, rows.len()));
                         }
+                    }
+                }
+            }
+
+            // Hidden section: agents the user parked with Space. Dim, one line
+            // each, no jump number — only ⚠ keeps its colour so a pending
+            // approval is still noticeable.
+            if visible_count < agents.len() {
+                let dim = Style::default().fg(Color::DarkGray);
+                let hidden_count = agents.len() - visible_count;
+                if !rows.items.is_empty() {
+                    rows.push(ListItem::new(Line::from("")), None);
+                }
+                rows.push(
+                    ListItem::new(Line::from(vec![
+                        Span::styled("▸ ", dim),
+                        Span::styled(format!("hidden ({})", hidden_count), dim),
+                        Span::styled(
+                            "  space: unhide",
+                            Style::default().fg(Color::Rgb(70, 70, 80)),
+                        ),
+                    ])),
+                    None,
+                );
+
+                for (original_idx, agent) in agents.iter().enumerate().skip(visible_count) {
+                    let is_cursor = original_idx == state.selected_index;
+                    let block_start = rows.len();
+                    let cursor_indicator = if is_cursor { "┃ " } else { "  " };
+                    let item_style = if is_cursor {
+                        Style::default().bg(Color::Rgb(40, 40, 50))
+                    } else {
+                        Style::default()
+                    };
+
+                    let (status_char, status_style) = match &agent.status {
+                        AgentStatus::AwaitingApproval { .. } => (
+                            "⚠",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ),
+                        AgentStatus::Processing { .. } => (state.spinner_frame(), dim),
+                        AgentStatus::Idle => ("●", dim),
+                        AgentStatus::Error { .. } => ("✗", dim),
+                        AgentStatus::Unknown => ("○", dim),
+                    };
+
+                    let summary = agent
+                        .task_summary()
+                        .unwrap_or_else(|| agent.abbreviated_path());
+                    // "   " stands in for the jump number so glyphs stay aligned
+                    let label = format!("{} · {}", agent.window_name, summary);
+                    let label = truncate_str(&label, available_width.saturating_sub(8));
+                    let line = Line::from(vec![
+                        Span::styled(cursor_indicator, dim),
+                        Span::raw(AGENT_INDENT),
+                        Span::raw("   "),
+                        Span::styled(status_char, status_style),
+                        Span::raw(" "),
+                        Span::styled(label, dim),
+                    ]);
+                    rows.push(ListItem::new(line).style(item_style), Some(original_idx));
+
+                    if is_cursor {
+                        cursor_span = Some((block_start, rows.len()));
                     }
                 }
             }

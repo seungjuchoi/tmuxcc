@@ -1,6 +1,6 @@
 use crate::agents::MonitoredAgent;
+use crate::app::HiddenPanes;
 use crate::monitor::SystemStats;
-use std::collections::HashSet;
 use std::time::Instant;
 
 /// A rectangle on screen, recorded during rendering so mouse events can be
@@ -101,8 +101,8 @@ pub struct AppState {
     pub agents: AgentTree,
     /// Currently selected agent index (cursor position)
     pub selected_index: usize,
-    /// Multi-selected agent indices
-    pub selected_agents: HashSet<usize>,
+    /// Panes the user parked in the dim "hidden" section (persisted)
+    pub hidden: HiddenPanes,
     /// Whether help is being shown
     pub show_help: bool,
     /// Whether subagent log is shown
@@ -144,7 +144,7 @@ impl AppState {
         Self {
             agents: AgentTree::new(),
             selected_index: 0,
-            selected_agents: HashSet::new(),
+            hidden: HiddenPanes::in_memory(),
             show_help: false,
             show_subagent_log: false,
             should_quit: false,
@@ -292,41 +292,87 @@ impl AppState {
             .flatten()
     }
 
-    /// Toggles selection of the current agent
-    pub fn toggle_selection(&mut self) {
-        if self.selected_agents.contains(&self.selected_index) {
-            self.selected_agents.remove(&self.selected_index);
-        } else {
-            self.selected_agents.insert(self.selected_index);
+    /// True when the agent at `index` sits in the hidden section
+    pub fn is_hidden(&self, index: usize) -> bool {
+        self.agents
+            .get_agent(index)
+            .map(|agent| self.hidden.contains(&agent.pane_id))
+            .unwrap_or(false)
+    }
+
+    /// Number of agents in the main (not hidden) list. Because the list is
+    /// sorted hidden-last, these are exactly the indices `0..visible_count`.
+    pub fn visible_count(&self) -> usize {
+        self.agents
+            .root_agents
+            .iter()
+            .filter(|agent| !self.hidden.contains(&agent.pane_id))
+            .count()
+    }
+
+    /// Number of agents in the hidden section
+    pub fn hidden_count(&self) -> usize {
+        self.agents.root_agents.len() - self.visible_count()
+    }
+
+    /// Hides the agent under the cursor, or shows it again if it was hidden,
+    /// and saves the set. The list is re-sorted and the cursor follows the
+    /// agent to its new place. Returns the agent's new hidden state.
+    pub fn toggle_hidden(&mut self) -> Result<bool, String> {
+        let Some(agent) = self.selected_agent() else {
+            return Err("No agent under the cursor".to_string());
+        };
+        if agent.pane_id.is_empty() {
+            return Err("Cannot hide: pane id unknown".to_string());
         }
+        let pane_id = agent.pane_id.clone();
+        let now_hidden = self.hidden.toggle(&pane_id);
+        self.sort_agents();
+        self.hidden
+            .save()
+            .map_err(|e| format!("Failed to save hidden list: {}", e))?;
+        Ok(now_hidden)
     }
 
-    /// Selects all agents
-    pub fn select_all(&mut self) {
-        for i in 0..self.agents.root_agents.len() {
-            self.selected_agents.insert(i);
+    /// Installs a fresh scan result. The cursor stays on the agent it was on
+    /// (matched by id), so agents appearing or disappearing above it do not
+    /// push it onto a different row.
+    pub fn replace_agents(&mut self, agents: AgentTree) {
+        let cursor_id = self.selected_agent().map(|agent| agent.id.clone());
+        self.agents = agents;
+        if let Some(id) = cursor_id {
+            if let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) {
+                self.selected_index = index;
+            }
         }
+        self.sort_agents();
     }
 
-    /// Clears all selections
-    pub fn clear_selection(&mut self) {
-        self.selected_agents.clear();
-    }
-
-    /// Returns indices to operate on (selected agents, or current if none selected)
-    pub fn get_operation_indices(&self) -> Vec<usize> {
-        if self.selected_agents.is_empty() {
-            vec![self.selected_index]
-        } else {
-            let mut indices: Vec<usize> = self.selected_agents.iter().copied().collect();
-            indices.sort();
-            indices
+    /// Orders the list the way it is drawn — visible agents first, hidden ones
+    /// last, each group by (session, window, pane) — so j/k and the 1-9 jump
+    /// numbers match the screen. The cursor stays on the same agent.
+    pub fn sort_agents(&mut self) {
+        let cursor_id = self.selected_agent().map(|agent| agent.id.clone());
+        let hidden = &self.hidden;
+        self.agents.root_agents.sort_by(|a, b| {
+            let key = |x: &MonitoredAgent| {
+                (
+                    hidden.contains(&x.pane_id),
+                    x.session.clone(),
+                    x.window,
+                    x.pane,
+                )
+            };
+            key(a).cmp(&key(b))
+        });
+        if let Some(id) = cursor_id {
+            if let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) {
+                self.selected_index = index;
+            }
         }
-    }
-
-    /// Check if an agent is in multi-selection
-    pub fn is_multi_selected(&self, index: usize) -> bool {
-        self.selected_agents.contains(&index)
+        if self.selected_index >= self.agents.root_agents.len() {
+            self.selected_index = self.agents.root_agents.len().saturating_sub(1);
+        }
     }
 
     /// Toggles help display
@@ -432,6 +478,123 @@ mod tests {
         state.select_prev();
         state.focus_origin_agent();
         assert_eq!(state.selected_index, 0);
+    }
+
+    fn agent(id: &str, target: &str, window: u32, pane: u32, pane_id: &str) -> MonitoredAgent {
+        let mut agent = MonitoredAgent::new(
+            id.to_string(),
+            target.to_string(),
+            "main".to_string(),
+            window,
+            "code".to_string(),
+            pane,
+            "/home/user/project".to_string(),
+            AgentType::ClaudeCode,
+            1000,
+        );
+        agent.pane_id = pane_id.to_string();
+        agent
+    }
+
+    #[test]
+    fn test_hidden_agents_sort_last_and_cursor_follows() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(agent("a", "main:0.0", 0, 0, "%1"));
+        state
+            .agents
+            .root_agents
+            .push(agent("b", "main:0.1", 0, 1, "%2"));
+        state
+            .agents
+            .root_agents
+            .push(agent("c", "main:1.0", 1, 0, "%3"));
+        state.sort_agents();
+        assert_eq!(state.visible_count(), 3);
+        assert_eq!(state.hidden_count(), 0);
+
+        // Hide the first agent: it moves to the end, the cursor goes with it
+        state.select_agent(0);
+        assert_eq!(state.toggle_hidden(), Ok(true));
+        let ids: Vec<&str> = state
+            .agents
+            .root_agents
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["b", "c", "a"]);
+        assert_eq!(state.selected_index, 2);
+        assert!(state.is_hidden(2));
+        assert!(!state.is_hidden(0));
+        assert_eq!(state.visible_count(), 2);
+        assert_eq!(state.hidden_count(), 1);
+
+        // A fresh scan delivers the agents in tmux order; sorting restores the
+        // hidden-last layout without losing the cursor
+        state.replace_agents(AgentTree {
+            root_agents: vec![
+                agent("a", "main:0.0", 0, 0, "%1"),
+                agent("b", "main:0.1", 0, 1, "%2"),
+                agent("c", "main:1.0", 1, 0, "%3"),
+            ],
+        });
+        let ids: Vec<&str> = state
+            .agents
+            .root_agents
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["b", "c", "a"]);
+        assert_eq!(state.selected_index, 2);
+
+        // Unhide: back in tree order, cursor still on "a"
+        assert_eq!(state.toggle_hidden(), Ok(false));
+        let ids: Vec<&str> = state
+            .agents
+            .root_agents
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+        assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_replace_agents_keeps_cursor_on_the_same_agent() {
+        let mut state = AppState::new();
+        state.replace_agents(AgentTree {
+            root_agents: vec![agent("b", "main:0.1", 0, 1, "%2")],
+        });
+        state.select_agent(0);
+
+        // A new agent shows up above "b": the cursor must stay on "b"
+        state.replace_agents(AgentTree {
+            root_agents: vec![
+                agent("b", "main:0.1", 0, 1, "%2"),
+                agent("a", "main:0.0", 0, 0, "%1"),
+            ],
+        });
+        assert_eq!(state.selected_agent().map(|a| a.id.as_str()), Some("b"));
+        assert_eq!(state.selected_index, 1);
+
+        // The agent under the cursor vanishes: the index is clamped
+        state.replace_agents(AgentTree {
+            root_agents: vec![agent("a", "main:0.0", 0, 0, "%1")],
+        });
+        assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_toggle_hidden_needs_a_pane_id() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(agent("a", "main:0.0", 0, 0, ""));
+        assert!(state.toggle_hidden().is_err());
+        assert_eq!(state.hidden_count(), 0);
     }
 
     #[test]

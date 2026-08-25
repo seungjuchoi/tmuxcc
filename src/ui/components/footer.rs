@@ -8,30 +8,20 @@ use ratatui::{
 
 use crate::app::AppState;
 
-/// Footer widget: shown only when there is something to say
-/// (an error or an active multi-selection). Key hints live in the ? help.
+/// Footer widget: shown only when there is an error to report.
+/// Key hints live in the ? help.
 pub struct FooterWidget;
 
 impl FooterWidget {
     /// Whether the footer line should be displayed at all
     pub fn is_visible(state: &AppState) -> bool {
-        state.last_error.is_some() || !state.selected_agents.is_empty()
+        state.last_error.is_some()
     }
 
     pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         let mut spans: Vec<Span> = Vec::new();
 
-        if !state.selected_agents.is_empty() {
-            spans.push(Span::styled(
-                format!(" {} selected", state.selected_agents.len()),
-                Style::default().fg(Color::Cyan),
-            ));
-        }
-
         if let Some(error) = &state.last_error {
-            if !spans.is_empty() {
-                spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-            }
             spans.push(Span::styled(
                 format!(" ✗ {}", truncate_error(error, 60)),
                 Style::default().fg(Color::Red),

@@ -187,6 +187,8 @@ pub struct MonitoredAgent {
     pub id: String,
     /// Tmux target (e.g., "main:0.1")
     pub target: String,
+    /// Stable tmux pane id (`%12`); empty when unknown
+    pub pane_id: String,
     /// Session name
     pub session: String,
     /// Window index
@@ -238,6 +240,7 @@ impl MonitoredAgent {
         Self {
             id,
             target,
+            pane_id: String::new(),
             session,
             window,
             window_name,
