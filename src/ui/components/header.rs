@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::ui::Layout;
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -47,6 +48,12 @@ impl HeaderWidget {
             ));
         }
 
+        // System stats are dropped on narrow terminals so the counts stay visible
+        if Layout::is_compact(area) {
+            Self::draw(frame, area, spans);
+            return;
+        }
+
         // System stats: CPU
         spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
         let cpu_color = if state.system_stats.cpu_usage > 80.0 {
@@ -80,6 +87,10 @@ impl HeaderWidget {
             Style::default().fg(mem_color),
         ));
 
+        Self::draw(frame, area, spans);
+    }
+
+    fn draw(frame: &mut Frame, area: Rect, spans: Vec<Span>) {
         let line = Line::from(spans);
         let block = Block::default()
             .borders(Borders::ALL)

@@ -3,7 +3,17 @@ use ratatui::layout::{Constraint, Direction, Rect};
 /// Layout manager for the application
 pub struct Layout;
 
+/// Terminals narrower than this get the compact layout: the agent list takes
+/// the whole width and the preview is left out, since a split at that size
+/// leaves neither column readable.
+pub const COMPACT_WIDTH: u16 = 80;
+
 impl Layout {
+    /// True when the terminal is too narrow for the list/preview split
+    pub fn is_compact(area: Rect) -> bool {
+        area.width < COMPACT_WIDTH
+    }
+
     /// Creates the main layout with header, content, and an optional
     /// footer line (used only for errors / selection count)
     pub fn main_layout(area: Rect, show_footer: bool) -> Vec<Rect> {

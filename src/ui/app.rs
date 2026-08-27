@@ -136,7 +136,18 @@ async fn run_loop(
             // Header
             HeaderWidget::render(frame, main_chunks[0], state);
 
-            if state.show_subagent_log {
+            if Layout::is_compact(size) {
+                // Narrow terminal: the list alone, full width, no preview
+                let left = main_chunks[1];
+
+                state.regions = Regions {
+                    sidebar: region(left),
+                    preview: Region::default(),
+                    subagent_log: Region::default(),
+                };
+
+                AgentTreeWidget::render(frame, left, state);
+            } else if state.show_subagent_log {
                 // With subagent log: sidebar | preview | subagent_log
                 let (left, preview, subagent_log) =
                     Layout::content_layout_with_log(main_chunks[1], state.sidebar_width);

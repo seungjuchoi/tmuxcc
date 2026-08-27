@@ -42,6 +42,8 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 - **Context Awareness**: View context window usage percentage when available
 - **Pane Preview**: See live content from selected agent's tmux pane, in the
   colors the agent printed, and scroll back through it
+- **Compact Mode**: In a terminal narrower than 80 columns only the agent list
+  is shown, full width, so a small tmux pane still gives a usable overview
 - **Focus Integration**: Jump directly to any agent's pane in tmux
 - **Customizable**: Configure polling interval, capture lines, and custom agent patterns
 
