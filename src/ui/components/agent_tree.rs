@@ -86,8 +86,16 @@ impl AgentTreeWidget {
         let subagent_count = state.agents.running_subagent_count();
         let agent_count = state.visible_count();
 
-        // Build title
-        let title = if subagent_count > 0 {
+        // Build title. A search replaces the counts with the match count so
+        // the narrowed list is obviously narrowed.
+        let searching = state.search.is_active();
+        let title = if searching {
+            format!(
+                " {} of {} match ",
+                state.match_count(),
+                state.agents.root_agents.len()
+            )
+        } else if subagent_count > 0 {
             format!(" {} pending │ {} subs ", active_count, subagent_count)
         } else if active_count > 0 {
             format!(" ⚠ {} pending ", active_count)
@@ -95,15 +103,28 @@ impl AgentTreeWidget {
             format!(" {} agents ", agent_count)
         };
 
+        let border_color = if searching {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(Style::default().fg(border_color));
 
-        if state.agents.root_agents.is_empty() {
+        // Agents that pass the search, in list order (everything without a query)
+        let matching = state.matching_indices();
+
+        if matching.is_empty() {
+            let message = if state.agents.root_agents.is_empty() {
+                "  No agents detected"
+            } else {
+                "  No agent matches the search"
+            };
             let empty_text = List::new(vec![ListItem::new(Line::from(vec![Span::styled(
-                "  No agents detected",
+                message,
                 Style::default().fg(Color::DarkGray),
             )]))])
             .block(block);
@@ -124,7 +145,23 @@ impl AgentTreeWidget {
             // The list is sorted hidden-last, so the main tree is the first
             // `visible_count` agents and the rest go to the hidden section.
             let visible_count = state.visible_count();
-            let tree = SessionWindowTree::new(agents.iter().enumerate().take(visible_count));
+            let tree = SessionWindowTree::new(
+                matching
+                    .iter()
+                    .copied()
+                    .filter(|&idx| idx < visible_count)
+                    .map(|idx| (idx, &agents[idx])),
+            );
+            // Jump numbers count the drawn agents, so 1-9 keep working on a
+            // filtered list
+            let jump_number = |idx: usize| {
+                matching
+                    .iter()
+                    .filter(|&&m| m < visible_count)
+                    .position(|&m| m == idx)
+                    .map(|pos| pos + 1)
+                    .unwrap_or(0)
+            };
             let mut rows = Rows::default();
             let available_width = area.width.saturating_sub(4) as usize;
             // First and last row of the block belonging to the cursor
@@ -195,7 +232,7 @@ impl AgentTreeWidget {
                         };
 
                         // Jump number: 1-9 are reachable via digit keys
-                        let number = *original_idx + 1;
+                        let number = jump_number(*original_idx);
                         let number_style = if number <= 9 {
                             Style::default()
                                 .fg(Color::Yellow)
@@ -435,9 +472,14 @@ impl AgentTreeWidget {
             // Hidden section: agents the user parked with Space. Dim, one line
             // each, no jump number — only ⚠ keeps its colour so a pending
             // approval is still noticeable.
-            if visible_count < agents.len() {
+            let hidden_matching: Vec<usize> = matching
+                .iter()
+                .copied()
+                .filter(|&idx| idx >= visible_count)
+                .collect();
+            if !hidden_matching.is_empty() {
                 let dim = Style::default().fg(Color::DarkGray);
-                let hidden_count = agents.len() - visible_count;
+                let hidden_count = hidden_matching.len();
                 if !rows.items.is_empty() {
                     rows.push(ListItem::new(Line::from("")), None);
                 }
@@ -453,7 +495,8 @@ impl AgentTreeWidget {
                     None,
                 );
 
-                for (original_idx, agent) in agents.iter().enumerate().skip(visible_count) {
+                for original_idx in hidden_matching {
+                    let agent = &agents[original_idx];
                     let is_cursor = original_idx == state.selected_index;
                     let block_start = rows.len();
                     let cursor_indicator = if is_cursor { "┃ " } else { "  " };

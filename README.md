@@ -211,6 +211,22 @@ tmuxcc --init-config
 | `1`-`9` | Jump cursor to agent number |
 | `Enter` | Go to selected pane (closes tmuxcc) |
 
+### Search
+
+`/` opens a search line at the bottom. The list narrows as you type: every
+word of the query must appear somewhere in the agent's pane title, session or
+window name, path, or captured pane content (the text shown in the preview).
+Hits in the preview are highlighted, and the 1-9 jump numbers renumber to the
+agents that remain.
+
+| Key | Action |
+|-----|--------|
+| `/` | Open the search (a previous query is kept for refining) |
+| typing / `Backspace` | Edit the query; `Ctrl+u` clears it |
+| `Down` / `Up`, `Tab` / `Shift+Tab`, `Ctrl+n` / `Ctrl+p` | Move the cursor through the matches while typing |
+| `Enter` | Keep the filter and return to the list (`Enter` again jumps to the pane) |
+| `Esc` | Clear the filter |
+
 ### Preview Scrolling
 
 The preview follows the live output until you scroll it; the title then shows how
@@ -244,7 +260,7 @@ screen does not move.
 |-----|--------|
 | `Space` | Toggle selection of current agent |
 | `Ctrl+a` | Select all agents |
-| `Esc` | Clear selection / Close popup |
+| `Esc` | Clear search / close subagent log / quit |
 
 ### Actions
 

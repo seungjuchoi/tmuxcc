@@ -13,7 +13,7 @@ pub struct HelpWidget;
 
 impl HelpWidget {
     pub fn render(frame: &mut Frame, area: Rect) {
-        let popup_area = Layout::centered_popup(area, 60, 70);
+        let popup_area = Layout::centered_popup(area, 60, 80);
 
         // Clear the background
         frame.render_widget(Clear, popup_area);
@@ -48,6 +48,23 @@ impl HelpWidget {
             Line::from(vec![
                 Span::styled("  Enter    ", key_style),
                 Span::styled("Go to selected pane (closes tmuxcc)", desc_style),
+            ]),
+            Line::from(vec![]),
+            Line::from(vec![Span::styled("Search", section_style)]),
+            Line::from(vec![]),
+            Line::from(vec![
+                Span::styled("  /        ", key_style),
+                Span::styled(
+                    "Search titles and pane content (filters the list)",
+                    desc_style,
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("           ", key_style),
+                Span::styled(
+                    "Enter keeps the filter, Esc clears it; ↑↓ move while typing",
+                    Style::default().fg(Color::DarkGray),
+                ),
             ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("Preview scrolling", section_style)]),
@@ -88,7 +105,7 @@ impl HelpWidget {
             ]),
             Line::from(vec![
                 Span::styled("  Esc      ", key_style),
-                Span::styled("Close subagent log / quit", desc_style),
+                Span::styled("Clear search / close subagent log / quit", desc_style),
             ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("Actions", section_style)]),

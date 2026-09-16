@@ -1,5 +1,5 @@
 use crate::agents::MonitoredAgent;
-use crate::app::HiddenPanes;
+use crate::app::{HiddenPanes, Search};
 use crate::monitor::SystemStats;
 use std::time::Instant;
 
@@ -103,6 +103,8 @@ pub struct AppState {
     pub selected_index: usize,
     /// Panes the user parked in the dim "hidden" section (persisted)
     pub hidden: HiddenPanes,
+    /// The `/` search filtering the list and highlighting the preview
+    pub search: Search,
     /// Whether help is being shown
     pub show_help: bool,
     /// Whether subagent log is shown
@@ -145,6 +147,7 @@ impl AppState {
             agents: AgentTree::new(),
             selected_index: 0,
             hidden: HiddenPanes::in_memory(),
+            search: Search::default(),
             show_help: false,
             show_subagent_log: false,
             should_quit: false,
@@ -187,24 +190,109 @@ impl AppState {
         self.agents.get_agent_mut(self.selected_index)
     }
 
-    /// Selects the next agent
+    /// Selects the next agent, skipping agents the search filters out
     pub fn select_next(&mut self) {
-        if !self.agents.root_agents.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.agents.root_agents.len();
-            self.on_cursor_moved();
+        let matching = self.matching_indices();
+        if matching.is_empty() {
+            return;
         }
+        // From a cursor that is filtered out, "next" is the first match below it
+        let next = matching
+            .iter()
+            .copied()
+            .find(|&idx| idx > self.selected_index)
+            .unwrap_or(matching[0]);
+        self.selected_index = next;
+        self.on_cursor_moved();
     }
 
-    /// Selects the previous agent
+    /// Selects the previous agent, skipping agents the search filters out
     pub fn select_prev(&mut self) {
-        if !self.agents.root_agents.is_empty() {
-            if self.selected_index == 0 {
-                self.selected_index = self.agents.root_agents.len() - 1;
-            } else {
-                self.selected_index -= 1;
-            }
-            self.on_cursor_moved();
+        let matching = self.matching_indices();
+        if matching.is_empty() {
+            return;
         }
+        let prev = matching
+            .iter()
+            .rev()
+            .copied()
+            .find(|&idx| idx < self.selected_index)
+            .unwrap_or(matching[matching.len() - 1]);
+        self.selected_index = prev;
+        self.on_cursor_moved();
+    }
+
+    /// Indices (into `root_agents`, in list order) of the agents that pass
+    /// the search filter. Without a query that is every agent.
+    pub fn matching_indices(&self) -> Vec<usize> {
+        self.agents
+            .root_agents
+            .iter()
+            .enumerate()
+            .filter(|(_, agent)| self.search.matches(agent))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Indices of the matching agents in the main (not hidden) list, in the
+    /// order they are drawn. Their positions are the 1-9 jump numbers.
+    pub fn visible_matching_indices(&self) -> Vec<usize> {
+        let visible_count = self.visible_count();
+        self.matching_indices()
+            .into_iter()
+            .filter(|&idx| idx < visible_count)
+            .collect()
+    }
+
+    /// Number of agents that pass the search filter
+    pub fn match_count(&self) -> usize {
+        self.matching_indices().len()
+    }
+
+    /// Opens the search input; the existing query stays so it can be refined
+    pub fn search_begin(&mut self) {
+        self.search.begin();
+    }
+
+    /// Appends a character to the query and re-applies the filter
+    pub fn search_input(&mut self, c: char) {
+        self.search.push(c);
+        self.on_search_changed();
+    }
+
+    /// Deletes the last query character and re-applies the filter
+    pub fn search_backspace(&mut self) {
+        self.search.pop();
+        self.on_search_changed();
+    }
+
+    /// Empties the query but keeps the input open
+    pub fn search_clear_input(&mut self) {
+        self.search.set_query(String::new());
+        self.on_search_changed();
+    }
+
+    /// Closes the input, keeping the filter on the list
+    pub fn search_accept(&mut self) {
+        self.search.accept();
+    }
+
+    /// Drops the filter and closes the input
+    pub fn search_cancel(&mut self) {
+        self.search.clear();
+        self.sidebar_follow_cursor = true;
+    }
+
+    /// Keeps the cursor on a matching agent: when the agent under it drops
+    /// out of the result, the cursor moves to the first match.
+    fn on_search_changed(&mut self) {
+        let matching = self.matching_indices();
+        if matching.is_empty() || matching.contains(&self.selected_index) {
+            self.sidebar_follow_cursor = true;
+            return;
+        }
+        self.selected_index = matching[0];
+        self.on_cursor_moved();
     }
 
     /// Selects an agent by index
@@ -584,6 +672,61 @@ mod tests {
             root_agents: vec![agent("a", "main:0.0", 0, 0, "%1")],
         });
         assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_search_filters_navigation_and_moves_the_cursor_onto_a_match() {
+        let mut state = AppState::new();
+        let mut a = agent("a", "main:0.0", 0, 0, "%1");
+        a.title = "fix login".to_string();
+        let mut b = agent("b", "main:0.1", 0, 1, "%2");
+        b.title = "write docs".to_string();
+        let mut c = agent("c", "main:1.0", 1, 0, "%3");
+        c.last_content = "cargo test login".to_string();
+        state.replace_agents(AgentTree {
+            root_agents: vec![a, b, c],
+        });
+        state.select_agent(1);
+
+        state.search_begin();
+        for ch in "login".chars() {
+            state.search_input(ch);
+        }
+        assert_eq!(state.matching_indices(), vec![0, 2]);
+        assert_eq!(state.match_count(), 2);
+        // "b" dropped out of the result: the cursor jumps to the first match
+        assert_eq!(state.selected_index, 0);
+
+        // j/k only ever land on matches
+        state.select_next();
+        assert_eq!(state.selected_index, 2);
+        state.select_next();
+        assert_eq!(state.selected_index, 0);
+        state.select_prev();
+        assert_eq!(state.selected_index, 2);
+
+        // Enter keeps the filter, Esc drops it
+        state.search_accept();
+        assert!(!state.search.editing);
+        assert!(state.search.is_active());
+        state.search_cancel();
+        assert!(!state.search.is_active());
+        assert_eq!(state.matching_indices(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_search_with_no_match_keeps_the_cursor() {
+        let mut state = AppState::new();
+        state.replace_agents(AgentTree {
+            root_agents: vec![agent("a", "main:0.0", 0, 0, "%1")],
+        });
+        state.search_input('z');
+        assert!(state.matching_indices().is_empty());
+        assert_eq!(state.selected_index, 0);
+        state.select_next();
+        assert_eq!(state.selected_index, 0);
+        state.search_backspace();
+        assert_eq!(state.matching_indices(), vec![0]);
     }
 
     #[test]

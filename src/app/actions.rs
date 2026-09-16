@@ -47,6 +47,18 @@ pub enum Action {
     SidebarScrollUp(usize),
     /// Scroll the agent list viewport down (cursor stays put)
     SidebarScrollDown(usize),
+    /// Open the `/` search input (keeps the current query for refining)
+    SearchBegin,
+    /// Append a character to the search query
+    SearchInput(char),
+    /// Delete the last character of the search query
+    SearchBackspace,
+    /// Empty the search query while the input stays open
+    SearchClearInput,
+    /// Close the search input, keeping the filter
+    SearchAccept,
+    /// Drop the search filter and close the input
+    SearchCancel,
     /// No action (used for unbound keys)
     None,
 }
@@ -78,6 +90,12 @@ impl Action {
             Action::PreviewPageForward => "Scroll preview forward half a screen",
             Action::SidebarScrollUp(_) => "Scroll agent list up",
             Action::SidebarScrollDown(_) => "Scroll agent list down",
+            Action::SearchBegin => "Search agents by title and pane content",
+            Action::SearchInput(_) => "Type into the search",
+            Action::SearchBackspace => "Delete the last search character",
+            Action::SearchClearInput => "Clear the search input",
+            Action::SearchAccept => "Keep the search filter and return to the list",
+            Action::SearchCancel => "Clear the search filter",
             Action::None => "",
         }
     }

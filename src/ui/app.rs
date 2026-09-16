@@ -357,6 +357,24 @@ async fn run_loop(
                             Action::SidebarScrollDown(rows) => {
                                 state.scroll_sidebar_down(rows);
                             }
+                            Action::SearchBegin => {
+                                state.search_begin();
+                            }
+                            Action::SearchInput(c) => {
+                                state.search_input(c);
+                            }
+                            Action::SearchBackspace => {
+                                state.search_backspace();
+                            }
+                            Action::SearchClearInput => {
+                                state.search_clear_input();
+                            }
+                            Action::SearchAccept => {
+                                state.search_accept();
+                            }
+                            Action::SearchCancel => {
+                                state.search_cancel();
+                            }
                             Action::None => {}
                         }
                     }
@@ -392,6 +410,31 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
     // If help is shown, any key closes it
     if state.show_help {
         return Action::HideHelp;
+    }
+
+    // Search input open: printable keys go into the query. The cursor can
+    // still be moved through the matches so Enter can accept-and-jump in
+    // two keystrokes.
+    if state.search.editing {
+        return match code {
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+            KeyCode::Esc => Action::SearchCancel,
+            KeyCode::Enter => Action::SearchAccept,
+            KeyCode::Backspace => Action::SearchBackspace,
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                Action::SearchClearInput
+            }
+            KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => Action::NextAgent,
+            KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => Action::PrevAgent,
+            KeyCode::Down | KeyCode::Tab => Action::NextAgent,
+            KeyCode::Up | KeyCode::BackTab => Action::PrevAgent,
+            KeyCode::Char(c)
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                Action::SearchInput(c)
+            }
+            _ => Action::None,
+        };
     }
 
     // Sidebar focused
@@ -433,14 +476,17 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         // Number keys jump the cursor to the Nth agent in the list (1-based).
         // Only the main list is numbered; hidden agents are reached with j/k.
+        // With a search active the numbers count the matches that are shown.
         KeyCode::Char(c @ '1'..='9') => {
-            let idx = c.to_digit(10).unwrap() as usize - 1;
-            if idx < state.visible_count() {
-                Action::SelectAgent(idx)
-            } else {
-                Action::None
+            let nth = c.to_digit(10).unwrap() as usize - 1;
+            match state.visible_matching_indices().get(nth) {
+                Some(&idx) => Action::SelectAgent(idx),
+                None => Action::None,
             }
         }
+
+        // Search by title and pane content
+        KeyCode::Char('/') => Action::SearchBegin,
 
         // Enter jumps to the selected pane and closes tmuxcc
         KeyCode::Enter => Action::JumpToPane,
@@ -454,9 +500,12 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         KeyCode::Char('h') | KeyCode::Char('?') => Action::ShowHelp,
 
-        // Esc closes the subagent log first; with nothing to close it quits like 'q'
+        // Esc clears the search filter first, then closes the subagent log;
+        // with nothing to close it quits like 'q'
         KeyCode::Esc => {
-            if state.show_subagent_log {
+            if state.search.is_active() {
+                Action::SearchCancel
+            } else if state.show_subagent_log {
                 Action::ToggleSubagentLog
             } else {
                 Action::Quit
