@@ -14,8 +14,6 @@ use crate::app::AppState;
 /// Widget for displaying agents in a tree organized by session/window
 pub struct AgentTreeWidget;
 
-/// Indent of a window header below its session
-const WINDOW_INDENT: &str = "  ";
 /// Indent between the cursor/selection column and the agent line
 const AGENT_INDENT: &str = "  ";
 /// Indent of the agent detail lines (aligns under the status glyph)
@@ -180,15 +178,9 @@ impl AgentTreeWidget {
                 ]);
                 rows.push(ListItem::new(session_line), None);
 
+                // No window header row: it cost a full line per window. The
+                // window name is shown inline on the agent's info line instead.
                 for ((_window_num, window_name), window_agents) in windows.iter() {
-                    // Window header. The window number is left out on purpose:
-                    // the only numbers in the list are the 1-9 jump numbers.
-                    let window_line = Line::from(vec![
-                        Span::raw(WINDOW_INDENT),
-                        Span::styled(*window_name, Style::default().fg(Color::Gray)),
-                    ]);
-                    rows.push(ListItem::new(window_line), None);
-
                     for (original_idx, agent) in window_agents.iter() {
                         let is_cursor = *original_idx == state.selected_index;
                         let owner = Some(*original_idx);
@@ -255,14 +247,16 @@ impl AgentTreeWidget {
                         ]);
                         rows.push(ListItem::new(line).style(item_style), owner);
 
-                        // Info line: agent type + context bar
-                        // (no path here — the window name above already shows the folder)
+                        // Info line: agent type + window name + context bar
+                        // (the window name stands in for the folder)
                         let mut info_parts = vec![
                             Span::styled(
                                 detail_prefix.clone(),
                                 Style::default().fg(Color::DarkGray),
                             ),
                             Span::styled(agent.agent_type.short_name(), type_style),
+                            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(*window_name, Style::default().fg(Color::Gray)),
                         ];
 
                         // Context bar if available (percentage of the window *used*)
