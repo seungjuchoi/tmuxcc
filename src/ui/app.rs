@@ -1,6 +1,6 @@
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
@@ -26,6 +26,10 @@ use super::Layout;
 
 /// Rows scrolled per mouse wheel notch
 const WHEEL_STEP: usize = 3;
+
+/// Two left clicks on the same sidebar row within this window count as a
+/// double-click (crossterm reports no double-click event of its own)
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// Runs the main application loop
 ///
@@ -120,6 +124,9 @@ async fn run_loop(
     tmux_client: &TmuxClient,
     system_stats: &mut SystemStatsCollector,
 ) -> Result<()> {
+    // Last left click on the agent list, for double-click detection
+    let mut last_click: Option<(usize, Instant)> = None;
+
     loop {
         // Advance animation tick
         state.tick();
@@ -215,14 +222,36 @@ async fn run_loop(
 
                         match mouse.kind {
                             MouseEventKind::Down(MouseButton::Left) => {
+                                let mut clicked = None;
                                 if regions.sidebar.contains(x, y) {
                                     // Row 0 of the list sits just below the border
                                     if y > regions.sidebar.y {
                                         let row = (y - regions.sidebar.y - 1) as usize;
                                         if let Some(idx) = state.agent_at_sidebar_row(row) {
                                             state.select_agent(idx);
+                                            clicked = Some(idx);
                                         }
                                     }
+                                }
+                                // A double-click on an agent acts like Enter:
+                                // jump to its pane and close tmuxcc
+                                let now = Instant::now();
+                                let is_double = matches!(
+                                    (clicked, last_click),
+                                    (Some(a), Some((b, at))) if a == b && now.duration_since(at) <= DOUBLE_CLICK
+                                );
+                                if is_double {
+                                    last_click = None;
+                                    if let Some(agent) = state.selected_agent() {
+                                        let target = agent.target.clone();
+                                        if let Err(e) = tmux_client.focus_pane(&target) {
+                                            state.set_error(format!("Failed to jump: {}", e));
+                                        } else {
+                                            state.should_quit = true;
+                                        }
+                                    }
+                                } else {
+                                    last_click = clicked.map(|idx| (idx, now));
                                 }
                             }
                             MouseEventKind::ScrollUp => {

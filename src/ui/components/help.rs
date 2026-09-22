@@ -89,6 +89,10 @@ impl HelpWidget {
                 Span::styled("  Wheel    ", key_style),
                 Span::styled("Scrolls whatever is under the pointer", desc_style),
             ]),
+            Line::from(vec![
+                Span::styled("  2×Click  ", key_style),
+                Span::styled("Double-click an agent = Enter (go to pane)", desc_style),
+            ]),
             Line::from(vec![]),
             Line::from(vec![Span::styled("Hiding", section_style)]),
             Line::from(vec![]),

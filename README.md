@@ -249,6 +249,7 @@ Scroll depth is limited by `--capture-lines` (100 by default).
 | Wheel over the preview | Scrolls the preview |
 | Wheel over the agent list | Scrolls the list viewport (the cursor stays put) |
 | Click in the agent list | Selects the agent on that row |
+| Double-click in the agent list | Same as Enter: jumps to that pane and closes tmuxcc |
 | Click in the input box | Focuses the input |
 
 The wheel acts on whatever sits under the pointer, so a list that already fits on
