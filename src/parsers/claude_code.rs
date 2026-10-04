@@ -38,6 +38,10 @@ pub struct ClaudeCodeParser {
 
     // Busy line printed above the input box while a turn is running
     busy_pattern: Regex,
+    // Line left in the same slot once the turn has finished
+    done_pattern: Regex,
+    // Option of a select menu, the highlighted one prefixed with "❯"
+    menu_choice_pattern: Regex,
 
     // Auto-compact warning, which reports context *left*
     context_left_pattern: Regex,
@@ -95,6 +99,15 @@ impl ClaudeCodeParser {
                 r"^\s*\S[^\n]*?\((?:((?:\d+h\s+)?(?:\d+m\s+)?\d+s)\b[^)]*|[^)]*esc to interrupt[^)]*)\)"
             ).unwrap(),
 
+            // What replaces the busy line once the turn ends: "✻ Crunched for 36s",
+            // which current versions extend with the finish time, e.g.
+            // "✻ Baked for 17m 6s · done 10:20 AM" or "· done Saturday 5:43 PM".
+            done_pattern: Regex::new(
+                r"^\s*\S\s+\S+ for ((?:\d+h\s+)?(?:\d+m\s+)?\d+s)(?:\s*·\s*done\s+(.+?))?\s*$"
+            ).unwrap(),
+
+            menu_choice_pattern: Regex::new(r"^\s*(?:❯\s*)?(\d+)\.\s+(.+?)\s*$").unwrap(),
+
             // Context *left* pattern (e.g., "Context left until auto-compact: 42%")
             context_left_pattern: Regex::new(
                 r"(?i)Context\s+(?:left|remaining).*?(\d+)%"
@@ -130,6 +143,36 @@ impl ClaudeCodeParser {
         None
     }
 
+    /// Detect a finished turn: the "✻ Crunched for 36s · done 10:20 AM" line
+    /// below the last prompt the user submitted. The input box's own `❯` is
+    /// skipped; reaching an earlier `❯` first means the newest turn left no
+    /// such line (interrupted, or the output is still scrolling in).
+    fn detect_done(&self, content: &str) -> Option<AgentStatus> {
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(40);
+        let mut seen_input_box = false;
+
+        for line in lines[start..].iter().rev() {
+            if line.trim_start().starts_with('❯') {
+                if seen_input_box {
+                    return None;
+                }
+                seen_input_box = true;
+                continue;
+            }
+            if let Some(cap) = self.done_pattern.captures(line) {
+                let elapsed = &cap[1];
+                let finished = match cap.get(2) {
+                    Some(at) => format!("{} · {}", at.as_str(), elapsed),
+                    None => elapsed.to_string(),
+                };
+                return Some(AgentStatus::Done { finished });
+            }
+        }
+
+        None
+    }
+
     fn detect_approval(&self, content: &str) -> Option<(ApprovalType, String)> {
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {
@@ -140,6 +183,19 @@ impl ClaudeCodeParser {
         let check_start = lines.len().saturating_sub(20);
         let recent_lines = &lines[check_start..];
         let recent = recent_lines.join("\n");
+
+        // A select menu (AskUserQuestion, plan approval, ...) is the current
+        // Claude Code way of asking; plain Yes/No permission menus fall through
+        // to the typed checks below.
+        if let Some((choices, question)) = self.detect_select_menu(&lines) {
+            return Some((
+                ApprovalType::UserQuestion {
+                    choices,
+                    multi_select: false,
+                },
+                question,
+            ));
+        }
 
         // Check for user question with choices first (AskUserQuestion)
         if let Some((choices, question)) = self.extract_user_question(&recent) {
@@ -199,6 +255,72 @@ impl ClaudeCodeParser {
             ApprovalType::Other("Pending approval".to_string()),
             String::new(),
         ))
+    }
+
+    /// Detect a select menu, anchored on its footer
+    /// ("Enter to select · ↑/↓ to navigate · Esc to cancel"). Options may carry
+    /// description lines and be split by a separator, and the highlighted one
+    /// starts with `❯`, so they are collected walking up from the footer until
+    /// option 1. The question is the line just above option 1.
+    fn detect_select_menu(&self, lines: &[&str]) -> Option<(Vec<String>, String)> {
+        let footer = lines
+            .iter()
+            .rev()
+            .filter(|line| !line.trim().is_empty())
+            .take(6)
+            .position(|line| line.contains("Enter to select") && line.contains("Esc to cancel"))?;
+        let non_empty: Vec<usize> = (0..lines.len())
+            .rev()
+            .filter(|&i| !lines[i].trim().is_empty())
+            .collect();
+        let footer_idx = non_empty[footer];
+
+        let mut options: Vec<(u32, String)> = Vec::new();
+        let mut first_idx = None;
+        let search_start = footer_idx.saturating_sub(60);
+        for i in (search_start..footer_idx).rev() {
+            if let Some(cap) = self.menu_choice_pattern.captures(lines[i]) {
+                let Ok(num) = cap[1].parse::<u32>() else {
+                    continue;
+                };
+                options.push((num, cap[2].to_string()));
+                if num == 1 {
+                    first_idx = Some(i);
+                    break;
+                }
+            }
+        }
+        let first_idx = first_idx?;
+        options.reverse();
+        if options
+            .iter()
+            .enumerate()
+            .any(|(i, (num, _))| *num as usize != i + 1)
+        {
+            return None;
+        }
+        if options[0].1.starts_with("Yes") {
+            return None;
+        }
+
+        let choices: Vec<String> = options
+            .into_iter()
+            .map(|(_, label)| label)
+            .filter(|label| label != "Type something." && label != "Chat about this")
+            .collect();
+        if choices.is_empty() {
+            return None;
+        }
+
+        let question = lines[..first_idx]
+            .iter()
+            .rev()
+            .map(|line| line.trim())
+            .find(|line| !line.is_empty() && !line.starts_with('─'))
+            .unwrap_or_default()
+            .to_string();
+
+        Some((choices, question))
     }
 
     /// Detect Claude Code's button-style Yes/No approval
@@ -456,6 +578,10 @@ impl AgentParser for ClaudeCodeParser {
             return status;
         }
 
+        if let Some(status) = self.detect_done(content) {
+            return status;
+        }
+
         if content.trim().is_empty() {
             AgentStatus::Unknown
         } else {
@@ -649,16 +775,66 @@ mod tests {
     }
 
     #[test]
-    fn test_finished_turn_is_idle() {
+    fn test_select_menu_needs_input() {
+        let parser = ClaudeCodeParser::new();
+        let content = "\
+❯ 랜덤 숫자 선택창 보여줘
+  Ran 1 shell command
+────────────────────────
+ ☐ 랜덤 숫자
+랜덤으로 뽑은 숫자 중 하나를 골라주세요.
+❯ 1. 72
+     랜덤 숫자 #1
+  2. 35
+     랜덤 숫자 #2
+  3. 92
+     랜덤 숫자 #3
+  4. 99
+     랜덤 숫자 #4
+  5. Type something.
+────────────────────────
+  6. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        match parser.parse_status(content) {
+            AgentStatus::AwaitingApproval {
+                approval_type: ApprovalType::UserQuestion { choices, .. },
+                details,
+            } => {
+                assert_eq!(choices, vec!["72", "35", "92", "99"]);
+                assert_eq!(details, "랜덤으로 뽑은 숫자 중 하나를 골라주세요.");
+            }
+            other => panic!("expected a question, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_finished_turn_is_done() {
         let parser = ClaudeCodeParser::new();
 
         // The same slot after the turn ends: past tense, no parenthesised timer.
         let done =
             "✻ Crunched for 36s\n\n────\n❯ \n────\n  ~/Documents/Code/tz | Opus 5 | ctx:6%\n";
-        assert!(
-            matches!(parser.parse_status(done), AgentStatus::Idle),
-            "a finished turn must not read as Processing"
-        );
+        match parser.parse_status(done) {
+            AgentStatus::Done { finished } => assert_eq!(finished, "36s"),
+            other => panic!("a finished turn must read as Done, got {:?}", other),
+        }
+
+        // Current versions append the finish time, kept across a recap block.
+        let timed = "✻ Baked for 17m 6s · done 10:20 AM\n\n※ recap: 다음 단계\n────\n❯ f\n────\n";
+        match parser.parse_status(timed) {
+            AgentStatus::Done { finished } => assert_eq!(finished, "10:20 AM · 17m 6s"),
+            other => panic!("expected Done, got {:?}", other),
+        }
+        let dated = "✻ Cooked for 2m 51s · done Saturday 5:43 PM\n❯ \n";
+        match parser.parse_status(dated) {
+            AgentStatus::Done { finished } => assert_eq!(finished, "Saturday 5:43 PM · 2m 51s"),
+            other => panic!("expected Done, got {:?}", other),
+        }
+
+        // A done line from an earlier turn, above the newest prompt, is stale.
+        let stale = "✻ Worked for 9s · done 1:00 PM\n❯ next task\n⎿ Interrupted\n────\n❯ \n";
+        assert!(matches!(parser.parse_status(stale), AgentStatus::Idle));
 
         // A tool call that merely mentions a duration is not a busy line.
         let recap = "⏺ Bash(sleep 10s)\n❯ \n";

@@ -121,6 +121,9 @@ impl fmt::Display for ApprovalType {
 pub enum AgentStatus {
     /// Agent is idle and ready for input
     Idle,
+    /// Agent finished a turn and is waiting for the next prompt. `finished`
+    /// is what the agent printed about it, e.g. "10:20 AM · 17m 6s".
+    Done { finished: String },
     /// Agent is actively processing
     Processing { activity: String },
     /// Agent is waiting for user approval
@@ -147,6 +150,7 @@ impl AgentStatus {
     pub fn indicator(&self) -> &str {
         match self {
             AgentStatus::Idle => "●",
+            AgentStatus::Done { .. } => "✓",
             AgentStatus::Processing { .. } => "◐",
             AgentStatus::AwaitingApproval { .. } => "⚠",
             AgentStatus::Error { .. } => "✗",
@@ -158,6 +162,7 @@ impl AgentStatus {
     pub fn short_text(&self) -> String {
         match self {
             AgentStatus::Idle => "Idle".to_string(),
+            AgentStatus::Done { finished } => format!("Done {}", finished),
             AgentStatus::Processing { activity } => {
                 if activity.is_empty() {
                     "Processing".to_string()
@@ -166,7 +171,7 @@ impl AgentStatus {
                 }
             }
             AgentStatus::AwaitingApproval { approval_type, .. } => {
-                format!("APPROVAL NEEDED [{}]", approval_type.short_desc())
+                format!("NEEDS INPUT [{}]", approval_type.short_desc())
             }
             AgentStatus::Error { message } => format!("Error: {}", message),
             AgentStatus::Unknown => "Unknown".to_string(),

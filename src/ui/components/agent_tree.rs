@@ -195,7 +195,13 @@ impl AgentTreeWidget {
                         // Status indicator: the glyph and its color carry the state,
                         // so no redundant "Idle"/"Working" label is printed.
                         let (status_char, status_style) = match &agent.status {
-                            AgentStatus::Idle => ("●", Style::default().fg(Color::Yellow)),
+                            AgentStatus::Idle => ("●", Style::default().fg(Color::Gray)),
+                            AgentStatus::Done { .. } => (
+                                "✓",
+                                Style::default()
+                                    .fg(Color::LightBlue)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                             AgentStatus::Processing { .. } => {
                                 (state.spinner_frame(), Style::default().fg(Color::Green))
                             }
@@ -384,6 +390,20 @@ impl AgentTreeWidget {
                                     );
                                 }
                             }
+                            AgentStatus::Done { finished } => {
+                                let done_text = truncate_str(
+                                    &format!("done {}", finished),
+                                    available_width.saturating_sub(9),
+                                );
+                                let done_line = Line::from(vec![
+                                    Span::styled(
+                                        detail_prefix.clone(),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                    Span::styled(done_text, Style::default().fg(Color::DarkGray)),
+                                ]);
+                                rows.push(ListItem::new(done_line).style(item_style), owner);
+                            }
                             AgentStatus::Error { message } => {
                                 let error_text =
                                     truncate_str(message, available_width.saturating_sub(11));
@@ -507,6 +527,7 @@ impl AgentTreeWidget {
                         ),
                         AgentStatus::Processing { .. } => (state.spinner_frame(), dim),
                         AgentStatus::Idle => ("●", dim),
+                        AgentStatus::Done { .. } => ("✓", dim),
                         AgentStatus::Error { .. } => ("✗", dim),
                         AgentStatus::Unknown => ("○", dim),
                     };

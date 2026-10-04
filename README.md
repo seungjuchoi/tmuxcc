@@ -34,7 +34,7 @@ TmuxCC is a TUI (Terminal User Interface) application that provides centralized 
 ## Features
 
 - **Multi-Agent Monitoring**: Track multiple AI agents across all tmux sessions and windows
-- **Real-time Status**: See agent states at a glance (Idle, Processing, Awaiting Approval, Error)
+- **Real-time Status**: See agent states at a glance (Needs Input, Processing, Done, Idle, Error)
 - **Approval Management**: Approve or reject pending requests with single keystrokes
 - **Batch Operations**: Select multiple agents and approve/reject all at once
 - **Hierarchical View**: Tree display organized by Session/Window/Pane
@@ -329,9 +329,10 @@ The glyph and its color carry the state, so no status label is printed in the li
 
 | Icon | Color | Status |
 |------|-------|--------|
-| `⚠` | red | Approval / question pending (details are listed below the agent) |
+| `⚠` | red | Needs input — approval / question pending (details are listed below the agent) |
 | spinner | green | Working (the activity text is shown below when the agent reports one) |
-| `●` | yellow | Idle — waiting for your input |
+| `✓` | blue | Done — Claude Code finished its last turn (`done <time> · <duration>` is shown below) |
+| `●` | gray | Idle — waiting for your input, no finished turn on screen |
 | `✗` | red | Error |
 | `○` | gray | Unknown |
 
