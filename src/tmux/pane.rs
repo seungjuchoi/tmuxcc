@@ -110,6 +110,29 @@ impl ProcessTreeCache {
     fn get_cmdline(&self, pid: u32) -> Option<String> {
         self.processes.get(&pid).map(|info| info.command.clone())
     }
+
+    /// Descendant pids of `pid` (not including `pid`), breadth-first.
+    fn get_descendant_pids(&self, pid: u32, max_depth: u32) -> Vec<u32> {
+        let mut pids = Vec::new();
+        let mut frontier: HashSet<u32> = HashSet::from([pid]);
+
+        for _ in 0..max_depth {
+            let mut level: Vec<u32> = self
+                .processes
+                .iter()
+                .filter(|(_, info)| info.parent_pid.is_some_and(|p| frontier.contains(&p)))
+                .map(|(&child_pid, _)| child_pid)
+                .collect();
+            if level.is_empty() {
+                break;
+            }
+            level.sort_unstable();
+            pids.extend_from_slice(&level);
+            frontier = level.into_iter().collect();
+        }
+
+        pids
+    }
 }
 
 /// Parses one `ps -A -o pid=,ppid=,command=` line into (pid, ppid, command).
@@ -141,6 +164,15 @@ pub fn refresh_process_cache() {
     if cache.needs_refresh() {
         cache.refresh();
     }
+}
+
+/// Pids of every process below `pid` in the (cached) process tree.
+///
+/// Used to tie on-disk agent state that records the agent's own pid (Kiro
+/// CLI's session `.lock`) back to the pane that hosts it.
+pub fn descendant_pids(pid: u32) -> Vec<u32> {
+    // Same depth as agent detection in `PaneInfo::parse`.
+    get_process_cache().lock().get_descendant_pids(pid, 6)
 }
 
 /// Represents a tmux pane with its identifying information

@@ -1,3 +1,4 @@
+mod kiro_session;
 mod system_stats;
 mod task;
 

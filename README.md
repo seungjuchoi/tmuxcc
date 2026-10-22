@@ -87,13 +87,16 @@ the pane content:
   `ask a question or describe a task`)
 - **Context**: the status bar reports context *used* (`◔ 18%`), which tmuxcc
   inverts into the remaining percentage it displays
-- **Task summary**: Kiro has no per-turn equivalent of Claude Code's `✳ <task>`
-  pane title, and writes nothing to the title itself. Set it from an agent hook
-  instead — `tmux select-pane -T '<task>'` — and tmuxcc shows that text
-  verbatim. Titles that still look like a shell title (`kiro-cli --resume-id
+- **Task summary**: the Kiro session title, read from Kiro's session store.
+  Kiro's terminal title is only ever `kiro: <cwd>`, so the name comes from
+  `~/.kiro/sessions/*/sess_*/session.json`. The session whose `.lock` pid sits
+  in the pane's process tree is the one shown. Because the title lives with the
+  session, it comes back when a session is resumed after a tmux restore.
+  Until Kiro has titled the session (`New Session`), the pane title is used
+  instead, e.g. one set from an agent hook (`tmux select-pane -T '<task>'`).
+  Titles that still look like a shell title (`kiro-cli --resume-id
   ~/D/C/C/downloader`, i.e. ending in a path) are discarded, so the sidebar
-  falls back to the abbreviated path until the session is named.
-  A `kiro: ` prefix is stripped too, for the `chat.terminalTitle` setting.
+  falls back to the abbreviated path. A `kiro: ` prefix is stripped too.
 
 Kiro's shell integration renames the pane shell to `fish (kiro-cli-term)` in
 *every* pane opened from a Kiro terminal, including plain shells and panes

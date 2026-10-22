@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use crate::agents::{AgentStatus, MonitoredAgent};
+use super::kiro_session;
+use crate::agents::{AgentStatus, AgentType, MonitoredAgent};
 use crate::app::AgentTree;
 use crate::parsers::ParserRegistry;
-use crate::tmux::{refresh_process_cache, TmuxClient};
+use crate::tmux::{descendant_pids, refresh_process_cache, TmuxClient};
 
 /// Hysteresis duration - keep "Processing" status for this long after last active detection
 const STATUS_HYSTERESIS_MS: u64 = 2000;
@@ -179,7 +180,15 @@ impl MonitorTask {
                 );
                 agent.status = status;
                 agent.pane_id = pane.pane_id.clone();
-                agent.title = pane.title.clone();
+                // Kiro CLI never puts the session name in the pane title
+                // (only `kiro: <cwd>`), so take it from Kiro's session store.
+                // Falls back to the pane title — the prompt-text hook — while
+                // the session is still untitled.
+                agent.title = match parser.agent_type() {
+                    AgentType::KiroCli => kiro_session::title_for(&descendant_pids(pane.pid))
+                        .unwrap_or_else(|| pane.title.clone()),
+                    _ => pane.title.clone(),
+                };
                 agent.subagents = subagents;
                 agent.last_content = content;
                 agent.styled_content = styled;
