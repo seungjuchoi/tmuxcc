@@ -74,6 +74,30 @@ The bar is shown whenever the agent puts a percentage on screen:
 
 Other agents do not expose a percentage, so their bar stays hidden.
 
+#### Claude usage limits
+
+The header shows the Claude subscription weekly limit next to CPU and MEM
+(`Claude 7d 26% ↻4d12h`: share used, time until it resets). It turns yellow
+at 70% and red at 90%.
+
+Claude Code only hands these numbers to its status line command, so that
+command has to save them where tmuxcc can read them. Add this to your
+status line script (it already receives the session JSON in `$input`):
+
+```bash
+if [ -n "$(echo "$input" | jq -r '.rate_limits.seven_day // empty')" ]; then
+  dir="${XDG_STATE_HOME:-$HOME/.local/state}/tmuxcc"
+  mkdir -p "$dir" && tmp="$dir/.claude-usage.$$" &&
+    echo "$input" | jq -c '.rate_limits + {captured_at: (now | floor)}' > "$tmp" &&
+    mv -f "$tmp" "$dir/claude-usage.json" || rm -f "$tmp"
+fi
+```
+
+The reading only updates while a Claude Code session is active. Once the
+window resets it shows 0% until a new snapshot arrives, and it is hidden when
+there is no snapshot (no Claude Code, or a non-subscription plan) or the
+snapshot is over a week past its reset.
+
 #### Kiro CLI notes
 
 Kiro CLI does not write the tmux pane title, so its status is read entirely from

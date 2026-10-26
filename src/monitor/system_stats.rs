@@ -1,6 +1,8 @@
 use std::time::Instant;
 use sysinfo::System;
 
+use super::claude_usage::{ClaudeUsage, ClaudeUsageReader};
+
 /// System resource statistics
 #[derive(Debug, Clone)]
 pub struct SystemStats {
@@ -10,6 +12,8 @@ pub struct SystemStats {
     pub memory_used: u64,
     /// Total memory in bytes
     pub memory_total: u64,
+    /// Claude subscription rate limits, when a snapshot is available
+    pub claude_usage: Option<ClaudeUsage>,
     /// Last update time
     last_update: Instant,
 }
@@ -20,6 +24,7 @@ impl Default for SystemStats {
             cpu_usage: 0.0,
             memory_used: 0,
             memory_total: 0,
+            claude_usage: None,
             last_update: Instant::now(),
         }
     }
@@ -65,6 +70,7 @@ impl SystemStats {
 /// Manager for collecting system statistics
 pub struct SystemStatsCollector {
     system: System,
+    claude: ClaudeUsageReader,
     stats: SystemStats,
 }
 
@@ -73,15 +79,21 @@ impl SystemStatsCollector {
     pub fn new() -> Self {
         let mut system = System::new_all();
         system.refresh_all();
+        let mut claude = ClaudeUsageReader::new();
 
         let stats = SystemStats {
             cpu_usage: system.global_cpu_usage(),
             memory_used: system.used_memory(),
             memory_total: system.total_memory(),
+            claude_usage: claude.usage().cloned(),
             last_update: Instant::now(),
         };
 
-        Self { system, stats }
+        Self {
+            system,
+            claude,
+            stats,
+        }
     }
 
     /// Refresh statistics (throttled to avoid excessive updates)
@@ -95,6 +107,8 @@ impl SystemStatsCollector {
             self.stats.cpu_usage = self.system.global_cpu_usage();
             self.stats.memory_used = self.system.used_memory();
             self.stats.memory_total = self.system.total_memory();
+            // The reader throttles its own file reads
+            self.stats.claude_usage = self.claude.usage().cloned();
             self.stats.last_update = Instant::now();
         }
     }

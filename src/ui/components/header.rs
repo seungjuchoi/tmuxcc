@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::monitor::{format_remaining, now_epoch};
 use crate::ui::Layout;
 use ratatui::{
     layout::Rect,
@@ -86,6 +87,34 @@ impl HeaderWidget {
             ),
             Style::default().fg(mem_color),
         ));
+
+        // Claude weekly limit, only when Claude Code has left a recent snapshot
+        let now = now_epoch();
+        if let Some(week) = state
+            .system_stats
+            .claude_usage
+            .as_ref()
+            .and_then(|u| u.seven_day)
+            .filter(|w| !w.is_abandoned(now))
+        {
+            let used = week.used_at(now);
+            let color = if used >= 90.0 {
+                Color::Red
+            } else if used >= 70.0 {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+            let reset = week
+                .remaining_secs(now)
+                .map(|s| format!(" ↻{}", format_remaining(s)))
+                .unwrap_or_default();
+            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                format!(" Claude 7d {:.0}%{} ", used, reset),
+                Style::default().fg(color),
+            ));
+        }
 
         Self::draw(frame, area, spans);
     }
