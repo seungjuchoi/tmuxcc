@@ -124,7 +124,14 @@ impl HeaderWidget {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Gray));
+            .border_style(Style::default().fg(Color::Gray))
+            .title_top(
+                Line::styled(
+                    concat!(" v", env!("CARGO_PKG_VERSION"), " "),
+                    Style::default().fg(Color::DarkGray),
+                )
+                .right_aligned(),
+            );
 
         let paragraph = Paragraph::new(line).block(block);
         frame.render_widget(paragraph, area);
