@@ -1,7 +1,29 @@
 use crate::agents::MonitoredAgent;
-use crate::app::{HiddenPanes, Search};
+use crate::app::{attention_rank, HiddenPanes, PinnedPanes, Search, SortMode};
 use crate::monitor::SystemStats;
-use std::time::Instant;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+/// How long a status-driven reorder is held back. Statuses change every poll
+/// (500 ms), and re-sorting on each change would make rows jump under the
+/// cursor and renumber the 1-9 jump keys. The first change starts the clock;
+/// when it runs out the list is re-sorted once with whatever the statuses are
+/// then. Agents appearing or leaving and user actions (pin, hide, `o`) apply
+/// immediately.
+pub const SORT_SETTLE: Duration = Duration::from_secs(3);
+
+/// Which part of the list an agent is drawn in. The list is sorted by
+/// section first, so each section is a contiguous index range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Section {
+    /// Pinned to the top (p)
+    Pinned,
+    /// The regular list
+    Main,
+    /// Parked in the dim list at the bottom (Space)
+    Hidden,
+}
 
 /// A rectangle on screen, recorded during rendering so mouse events can be
 /// routed to whatever panel is under the pointer.
@@ -103,6 +125,15 @@ pub struct AppState {
     pub selected_index: usize,
     /// Panes the user parked in the dim "hidden" section (persisted)
     pub hidden: HiddenPanes,
+    /// Panes the user pinned to the top of the list (persisted)
+    pub pinned: PinnedPanes,
+    /// Order of the list within each section (persisted)
+    pub sort_mode: SortMode,
+    /// Where the sort mode is saved; `None` keeps it in memory only (tests)
+    pub sort_mode_path: Option<PathBuf>,
+    /// When a status change first put the list out of order; the reorder
+    /// waits until `SORT_SETTLE` has passed since then
+    settle_since: Option<Instant>,
     /// The `/` search filtering the list and highlighting the preview
     pub search: Search,
     /// Whether help is being shown
@@ -147,6 +178,10 @@ impl AppState {
             agents: AgentTree::new(),
             selected_index: 0,
             hidden: HiddenPanes::in_memory(),
+            pinned: PinnedPanes::in_memory(),
+            sort_mode: SortMode::default(),
+            sort_mode_path: None,
+            settle_since: None,
             search: Search::default(),
             show_help: false,
             show_subagent_log: false,
@@ -380,21 +415,52 @@ impl AppState {
             .flatten()
     }
 
+    /// Section an agent belongs to. Hidden wins if a pane somehow ended up in
+    /// both sets (the toggles keep them exclusive).
+    pub fn section_of(&self, agent: &MonitoredAgent) -> Section {
+        if self.hidden.contains(&agent.pane_id) {
+            Section::Hidden
+        } else if self.pinned.contains(&agent.pane_id) {
+            Section::Pinned
+        } else {
+            Section::Main
+        }
+    }
+
     /// True when the agent at `index` sits in the hidden section
     pub fn is_hidden(&self, index: usize) -> bool {
         self.agents
             .get_agent(index)
-            .map(|agent| self.hidden.contains(&agent.pane_id))
+            .map(|agent| self.section_of(agent) == Section::Hidden)
             .unwrap_or(false)
     }
 
-    /// Number of agents in the main (not hidden) list. Because the list is
-    /// sorted hidden-last, these are exactly the indices `0..visible_count`.
+    /// True when the agent at `index` sits in the pinned section
+    pub fn is_pinned(&self, index: usize) -> bool {
+        self.agents
+            .get_agent(index)
+            .map(|agent| self.section_of(agent) == Section::Pinned)
+            .unwrap_or(false)
+    }
+
+    /// Number of agents in the pinned section. Because the list is sorted by
+    /// section, these are exactly the indices `0..pinned_count`.
+    pub fn pinned_count(&self) -> usize {
+        self.agents
+            .root_agents
+            .iter()
+            .filter(|agent| self.section_of(agent) == Section::Pinned)
+            .count()
+    }
+
+    /// Number of agents in the pinned and main sections (everything but the
+    /// hidden ones). Because the list is sorted hidden-last, these are exactly
+    /// the indices `0..visible_count`.
     pub fn visible_count(&self) -> usize {
         self.agents
             .root_agents
             .iter()
-            .filter(|agent| !self.hidden.contains(&agent.pane_id))
+            .filter(|agent| self.section_of(agent) != Section::Hidden)
             .count()
     }
 
@@ -403,59 +469,172 @@ impl AppState {
         self.agents.root_agents.len() - self.visible_count()
     }
 
-    /// Hides the agent under the cursor, or shows it again if it was hidden,
-    /// and saves the set. The list is re-sorted and the cursor follows the
-    /// agent to its new place. Returns the agent's new hidden state.
-    pub fn toggle_hidden(&mut self) -> Result<bool, String> {
+    /// Pane id of the agent under the cursor, for hide/pin
+    fn cursor_pane_id(&self, verb: &str) -> Result<String, String> {
         let Some(agent) = self.selected_agent() else {
             return Err("No agent under the cursor".to_string());
         };
         if agent.pane_id.is_empty() {
-            return Err("Cannot hide: pane id unknown".to_string());
+            return Err(format!("Cannot {}: pane id unknown", verb));
         }
-        let pane_id = agent.pane_id.clone();
+        Ok(agent.pane_id.clone())
+    }
+
+    /// Hides the agent under the cursor, or shows it again if it was hidden,
+    /// and saves the set. Hiding a pinned agent unpins it. The list is
+    /// re-sorted and the cursor follows the agent to its new place. Returns
+    /// the agent's new hidden state.
+    pub fn toggle_hidden(&mut self) -> Result<bool, String> {
+        let pane_id = self.cursor_pane_id("hide")?;
         let now_hidden = self.hidden.toggle(&pane_id);
+        let unpinned = now_hidden && self.pinned.remove(&pane_id);
         self.sort_agents();
         self.hidden
             .save()
             .map_err(|e| format!("Failed to save hidden list: {}", e))?;
+        if unpinned {
+            self.pinned
+                .save()
+                .map_err(|e| format!("Failed to save pinned list: {}", e))?;
+        }
         Ok(now_hidden)
     }
 
-    /// Installs a fresh scan result. The cursor stays on the agent it was on
-    /// (matched by id), so agents appearing or disappearing above it do not
-    /// push it onto a different row.
+    /// Pins the agent under the cursor to the top of the list, or unpins it,
+    /// and saves the set. Pinning a hidden agent unhides it. The list is
+    /// re-sorted and the cursor follows the agent. Returns the agent's new
+    /// pinned state.
+    pub fn toggle_pinned(&mut self) -> Result<bool, String> {
+        let pane_id = self.cursor_pane_id("pin")?;
+        let now_pinned = self.pinned.toggle(&pane_id);
+        let unhidden = now_pinned && self.hidden.remove(&pane_id);
+        self.sort_agents();
+        self.pinned
+            .save()
+            .map_err(|e| format!("Failed to save pinned list: {}", e))?;
+        if unhidden {
+            self.hidden
+                .save()
+                .map_err(|e| format!("Failed to save hidden list: {}", e))?;
+        }
+        Ok(now_pinned)
+    }
+
+    /// Switches to the next sort mode, re-sorts right away and saves it
+    pub fn cycle_sort_mode(&mut self) -> Result<SortMode, String> {
+        self.sort_mode = self.sort_mode.next();
+        self.sort_agents();
+        if let Some(path) = &self.sort_mode_path {
+            self.sort_mode
+                .save_to(path)
+                .map_err(|e| format!("Failed to save sort mode: {}", e))?;
+        }
+        Ok(self.sort_mode)
+    }
+
+    /// Installs a fresh scan result (see `replace_agents_at`)
     pub fn replace_agents(&mut self, agents: AgentTree) {
+        self.replace_agents_at(agents, Instant::now());
+    }
+
+    /// Installs a fresh scan result taken at `now`. The cursor stays on the
+    /// agent it was on (matched by id), so agents appearing or disappearing
+    /// above it do not push it onto a different row.
+    ///
+    /// When the scan holds the same agents as before, the on-screen order is
+    /// kept and a reorder caused by status changes waits for `SORT_SETTLE`.
+    /// A different set of agents is sorted right away.
+    pub fn replace_agents_at(&mut self, agents: AgentTree, now: Instant) {
         let cursor_id = self.selected_agent().map(|agent| agent.id.clone());
+        let previous: Vec<String> = self
+            .agents
+            .root_agents
+            .iter()
+            .map(|agent| agent.id.clone())
+            .collect();
         self.agents = agents;
+
+        let same_agents = previous.len() == self.agents.root_agents.len() && {
+            let ids: HashSet<&str> = previous.iter().map(String::as_str).collect();
+            self.agents
+                .root_agents
+                .iter()
+                .all(|agent| ids.contains(agent.id.as_str()))
+        };
+
+        if same_agents {
+            // Lay the fresh data out in the order already on screen
+            let position = |id: &str| previous.iter().position(|p| p == id);
+            self.agents
+                .root_agents
+                .sort_by_key(|agent| position(&agent.id));
+        }
         if let Some(id) = cursor_id {
             if let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) {
                 self.selected_index = index;
             }
         }
-        self.sort_agents();
+        if !same_agents {
+            self.sort_agents();
+            return;
+        }
+
+        if self.is_sorted() {
+            self.settle_since = None;
+            return;
+        }
+        match self.settle_since {
+            None => self.settle_since = Some(now),
+            Some(since) if now.duration_since(since) >= SORT_SETTLE => self.sort_agents(),
+            Some(_) => {}
+        }
     }
 
-    /// Orders the list the way it is drawn — visible agents first, hidden ones
-    /// last, each group by (session, window, pane) — so j/k and the 1-9 jump
-    /// numbers match the screen. The cursor stays on the same agent.
+    /// True while a status-driven reorder is being held back
+    pub fn is_settling(&self) -> bool {
+        self.settle_since.is_some()
+    }
+
+    /// Sort key: section first (pinned, main, hidden), then the sort mode's
+    /// key, then tmux order (session, window, pane) as the tie-break
+    fn order_key<'a>(&self, agent: &'a MonitoredAgent) -> (Section, u8, &'a str, u32, u32) {
+        let rank = match self.sort_mode {
+            SortMode::Session => 0,
+            SortMode::Attention => attention_rank(agent),
+        };
+        (
+            self.section_of(agent),
+            rank,
+            agent.session.as_str(),
+            agent.window,
+            agent.pane,
+        )
+    }
+
+    /// True when the list already is in `order_key` order
+    fn is_sorted(&self) -> bool {
+        self.agents
+            .root_agents
+            .windows(2)
+            .all(|pair| self.order_key(&pair[0]) <= self.order_key(&pair[1]))
+    }
+
+    /// Orders the list the way it is drawn — pinned agents first, hidden ones
+    /// last, each section by the sort mode — so j/k and the 1-9 jump numbers
+    /// match the screen. The cursor stays on the same agent, and the viewport
+    /// follows it if it moved.
     pub fn sort_agents(&mut self) {
+        self.settle_since = None;
         let cursor_id = self.selected_agent().map(|agent| agent.id.clone());
-        let hidden = &self.hidden;
-        self.agents.root_agents.sort_by(|a, b| {
-            let key = |x: &MonitoredAgent| {
-                (
-                    hidden.contains(&x.pane_id),
-                    x.session.clone(),
-                    x.window,
-                    x.pane,
-                )
-            };
-            key(a).cmp(&key(b))
-        });
+        let mut agents = std::mem::take(&mut self.agents.root_agents);
+        agents.sort_by(|a, b| self.order_key(a).cmp(&self.order_key(b)));
+        self.agents.root_agents = agents;
         if let Some(id) = cursor_id {
             if let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) {
-                self.selected_index = index;
+                if index != self.selected_index {
+                    self.selected_index = index;
+                    self.sidebar_follow_cursor = true;
+                }
             }
         }
         if self.selected_index >= self.agents.root_agents.len() {
@@ -493,7 +672,7 @@ impl Default for AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::AgentType;
+    use crate::agents::{AgentStatus, AgentType, ApprovalType};
 
     #[test]
     fn test_app_state_navigation() {
@@ -727,6 +906,242 @@ mod tests {
         assert_eq!(state.selected_index, 0);
         state.search_backspace();
         assert_eq!(state.matching_indices(), vec![0]);
+    }
+
+    fn ids(state: &AppState) -> Vec<&str> {
+        state
+            .agents
+            .root_agents
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect()
+    }
+
+    fn with_status(mut agent: MonitoredAgent, status: AgentStatus) -> MonitoredAgent {
+        agent.status = status;
+        agent
+    }
+
+    fn waiting() -> AgentStatus {
+        AgentStatus::AwaitingApproval {
+            approval_type: ApprovalType::ShellCommand,
+            details: String::new(),
+        }
+    }
+
+    fn working() -> AgentStatus {
+        AgentStatus::Processing {
+            activity: String::new(),
+        }
+    }
+
+    fn done() -> AgentStatus {
+        AgentStatus::Done {
+            finished: String::new(),
+        }
+    }
+
+    /// Four idle agents in tmux order a..d
+    fn four_agents() -> Vec<MonitoredAgent> {
+        vec![
+            agent("a", "main:0.0", 0, 0, "%1"),
+            agent("b", "main:0.1", 0, 1, "%2"),
+            agent("c", "main:1.0", 1, 0, "%3"),
+            agent("d", "main:2.0", 2, 0, "%4"),
+        ]
+    }
+
+    #[test]
+    fn test_attention_order_puts_agents_needing_you_first() {
+        let mut state = AppState::new();
+        state.sort_mode = SortMode::Attention;
+        let [a, b, c, d]: [MonitoredAgent; 4] = four_agents().try_into().unwrap();
+        state.replace_agents(AgentTree {
+            root_agents: vec![
+                with_status(a, working()),
+                b,
+                with_status(c, done()),
+                with_status(d, waiting()),
+            ],
+        });
+        // waiting → done → working → idle
+        assert_eq!(ids(&state), vec!["d", "c", "a", "b"]);
+
+        // Back to session order: plain tmux order
+        state.select_agent(0);
+        assert_eq!(state.cycle_sort_mode(), Ok(SortMode::Session));
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+        // The cursor followed "d"
+        assert_eq!(state.selected_agent().map(|a| a.id.as_str()), Some("d"));
+    }
+
+    #[test]
+    fn test_status_reorder_waits_for_the_settle_time() {
+        let mut state = AppState::new();
+        state.sort_mode = SortMode::Attention;
+        let t0 = Instant::now();
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: four_agents(),
+            },
+            t0,
+        );
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+        state.select_agent(3);
+
+        // "d" starts waiting: the row stays put for now
+        let scan = |d_status: AgentStatus| {
+            let mut agents = four_agents();
+            agents[3].status = d_status;
+            AgentTree {
+                root_agents: agents,
+            }
+        };
+        state.replace_agents_at(scan(waiting()), t0 + Duration::from_millis(500));
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+        assert!(state.is_settling());
+        // The fresh status is shown even though the order is held
+        assert!(state.agents.root_agents[3].status.needs_attention());
+
+        state.replace_agents_at(scan(waiting()), t0 + Duration::from_millis(3000));
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+
+        // 3 s after the first change: reordered once, cursor still on "d"
+        state.replace_agents_at(scan(waiting()), t0 + Duration::from_millis(3500));
+        assert_eq!(ids(&state), vec!["d", "a", "b", "c"]);
+        assert!(!state.is_settling());
+        assert_eq!(state.selected_index, 0);
+        assert!(state.sidebar_follow_cursor);
+    }
+
+    #[test]
+    fn test_a_status_flicker_inside_the_settle_time_never_reorders() {
+        let mut state = AppState::new();
+        state.sort_mode = SortMode::Attention;
+        let t0 = Instant::now();
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: four_agents(),
+            },
+            t0,
+        );
+        let mut agents = four_agents();
+        agents[2].status = done();
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: agents,
+            },
+            t0 + Duration::from_secs(1),
+        );
+        assert!(state.is_settling());
+
+        // Back to idle before the time ran out: nothing to do any more
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: four_agents(),
+            },
+            t0 + Duration::from_secs(2),
+        );
+        assert!(!state.is_settling());
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: four_agents(),
+            },
+            t0 + Duration::from_secs(5),
+        );
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_a_new_agent_is_sorted_in_right_away() {
+        let mut state = AppState::new();
+        state.sort_mode = SortMode::Attention;
+        let t0 = Instant::now();
+        let mut agents = four_agents();
+        let d = agents.pop().unwrap();
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: agents,
+            },
+            t0,
+        );
+
+        let mut agents = four_agents();
+        agents[3] = with_status(d, waiting());
+        state.replace_agents_at(
+            AgentTree {
+                root_agents: agents,
+            },
+            t0 + Duration::from_millis(500),
+        );
+        assert_eq!(ids(&state), vec!["d", "a", "b", "c"]);
+        assert!(!state.is_settling());
+    }
+
+    #[test]
+    fn test_pinned_agents_come_first_in_every_mode() {
+        let mut state = AppState::new();
+        state.replace_agents(AgentTree {
+            root_agents: four_agents(),
+        });
+
+        state.select_agent(2);
+        assert_eq!(state.toggle_pinned(), Ok(true));
+        assert_eq!(ids(&state), vec!["c", "a", "b", "d"]);
+        assert_eq!(state.selected_index, 0);
+        assert_eq!(state.pinned_count(), 1);
+        assert!(state.is_pinned(0));
+        // Pinned agents are numbered first
+        assert_eq!(state.visible_matching_indices(), vec![0, 1, 2, 3]);
+
+        // Attention order applies below the pinned section only
+        state.sort_mode = SortMode::Attention;
+        let mut agents = four_agents();
+        agents[3].status = waiting();
+        state.replace_agents(AgentTree {
+            root_agents: agents,
+        });
+        state.sort_agents();
+        assert_eq!(ids(&state), vec!["c", "d", "a", "b"]);
+
+        // Unpin: back into its place
+        assert_eq!(state.toggle_pinned(), Ok(false));
+        assert_eq!(ids(&state), vec!["d", "a", "b", "c"]);
+        assert_eq!(state.pinned_count(), 0);
+    }
+
+    #[test]
+    fn test_pin_and_hide_are_exclusive() {
+        let mut state = AppState::new();
+        state.replace_agents(AgentTree {
+            root_agents: four_agents(),
+        });
+
+        state.select_agent(0);
+        assert_eq!(state.toggle_pinned(), Ok(true));
+        // Hiding the pinned agent unpins it
+        assert_eq!(state.toggle_hidden(), Ok(true));
+        assert!(!state.pinned.contains("%1"));
+        assert_eq!(ids(&state), vec!["b", "c", "d", "a"]);
+        assert_eq!(state.selected_index, 3);
+
+        // Pinning a hidden agent unhides it
+        assert_eq!(state.toggle_pinned(), Ok(true));
+        assert!(!state.hidden.contains("%1"));
+        assert_eq!(ids(&state), vec!["a", "b", "c", "d"]);
+        assert_eq!(state.hidden_count(), 0);
+        assert_eq!(state.pinned_count(), 1);
+    }
+
+    #[test]
+    fn test_toggle_pinned_needs_a_pane_id() {
+        let mut state = AppState::new();
+        state
+            .agents
+            .root_agents
+            .push(agent("a", "main:0.0", 0, 0, ""));
+        assert!(state.toggle_pinned().is_err());
+        assert_eq!(state.pinned_count(), 0);
     }
 
     #[test]

@@ -94,8 +94,12 @@ impl HelpWidget {
                 Span::styled("Double-click an agent = Enter (go to pane)", desc_style),
             ]),
             Line::from(vec![]),
-            Line::from(vec![Span::styled("Hiding", section_style)]),
+            Line::from(vec![Span::styled("Hiding & pinning", section_style)]),
             Line::from(vec![]),
+            Line::from(vec![
+                Span::styled("  p        ", key_style),
+                Span::styled("Pin agent to the top of the list / unpin", desc_style),
+            ]),
             Line::from(vec![
                 Span::styled("  Space    ", key_style),
                 Span::styled("Hide agent (dim list at the bottom) / unhide", desc_style),
@@ -133,6 +137,24 @@ impl HelpWidget {
             Line::from(vec![]),
             Line::from(vec![Span::styled("View", section_style)]),
             Line::from(vec![]),
+            Line::from(vec![
+                Span::styled("  o        ", key_style),
+                Span::styled("Order: by session / by attention", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("           ", key_style),
+                Span::styled(
+                    "attention: waiting on you → error → done → working → idle",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("           ", key_style),
+                Span::styled(
+                    "status changes reorder the list at most once per 3s",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
             Line::from(vec![
                 Span::styled("  s / S    ", key_style),
                 Span::styled("Toggle subagent log", desc_style),

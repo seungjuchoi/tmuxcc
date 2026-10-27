@@ -9,6 +9,10 @@ pub enum Action {
     PrevAgent,
     /// Park the current agent in the dim hidden section, or bring it back
     ToggleHidden,
+    /// Pin the current agent to the top of the list, or unpin it
+    TogglePinned,
+    /// Switch the list order (session ↔ attention)
+    CycleSort,
     /// Approve the current agent's pending request
     Approve,
     /// Reject the current agent's pending request
@@ -71,6 +75,8 @@ impl Action {
             Action::NextAgent => "Select next agent",
             Action::PrevAgent => "Select previous agent",
             Action::ToggleHidden => "Hide / unhide current agent",
+            Action::TogglePinned => "Pin / unpin current agent",
+            Action::CycleSort => "Switch list order (session / attention)",
             Action::Approve => "Approve pending request",
             Action::Reject => "Reject pending request",
             Action::ApproveAll => "Approve all pending requests",

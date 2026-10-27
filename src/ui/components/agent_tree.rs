@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
@@ -9,9 +7,10 @@ use ratatui::{
 };
 
 use crate::agents::{AgentStatus, AgentType, ApprovalType, MonitoredAgent, SubagentStatus};
-use crate::app::AppState;
+use crate::app::{AppState, SortMode};
 
-/// Widget for displaying agents in a tree organized by session/window
+/// Widget for displaying the agent list: a pinned section, the main list
+/// (grouped by session, or flat in attention order) and the hidden section
 pub struct AgentTreeWidget;
 
 /// Indent between the cursor/selection column and the agent line
@@ -20,40 +19,6 @@ const AGENT_INDENT: &str = "  ";
 const DETAIL_INDENT: &str = "      ";
 /// Indent of the subagent lines
 const SUBAGENT_INDENT: &str = "     ";
-
-/// Type alias for window key (window number, window name)
-type WindowKey<'a> = (u32, &'a str);
-
-/// Type alias for agents in a window (index, agent reference)
-type WindowAgents<'a> = Vec<(usize, &'a MonitoredAgent)>;
-
-/// Type alias for windows map
-type WindowsMap<'a> = BTreeMap<WindowKey<'a>, WindowAgents<'a>>;
-
-/// Type alias for sessions map
-type SessionsMap<'a> = BTreeMap<&'a str, WindowsMap<'a>>;
-
-/// Represents the hierarchical structure: Session -> Window -> Agents
-struct SessionWindowTree<'a> {
-    sessions: SessionsMap<'a>,
-}
-
-impl<'a> SessionWindowTree<'a> {
-    fn new(agents: impl IntoIterator<Item = (usize, &'a MonitoredAgent)>) -> Self {
-        let mut sessions: SessionsMap<'a> = BTreeMap::new();
-
-        for (idx, agent) in agents {
-            sessions
-                .entry(&agent.session)
-                .or_default()
-                .entry((agent.window, &agent.window_name))
-                .or_default()
-                .push((idx, agent));
-        }
-
-        Self { sessions }
-    }
-}
 
 /// Rendered rows plus the agent each row belongs to.
 ///
@@ -87,7 +52,7 @@ impl AgentTreeWidget {
         // Build title. A search replaces the counts with the match count so
         // the narrowed list is obviously narrowed.
         let searching = state.search.is_active();
-        let title = if searching {
+        let mut title = if searching {
             format!(
                 " {} of {} match ",
                 state.match_count(),
@@ -100,6 +65,10 @@ impl AgentTreeWidget {
         } else {
             format!(" {} agents ", agent_count)
         };
+        // The default order needs no label; any other one is named
+        if state.sort_mode != SortMode::Session {
+            title.push_str(&format!("· {} ", state.sort_mode.as_str()));
+        }
 
         let border_color = if searching {
             Color::Yellow
@@ -139,347 +108,79 @@ impl AgentTreeWidget {
         let row_agents;
 
         {
+            let state: &AppState = state;
             let agents = &state.agents.root_agents;
-            // The list is sorted hidden-last, so the main tree is the first
-            // `visible_count` agents and the rest go to the hidden section.
+            // The list is sorted by section, so the pinned agents are
+            // `0..pinned_count`, the main list runs up to `visible_count` and
+            // the rest is the hidden section. Rows are drawn in index order,
+            // which keeps j/k, the jump numbers and the screen in step.
+            let pinned_count = state.pinned_count();
             let visible_count = state.visible_count();
-            let tree = SessionWindowTree::new(
-                matching
-                    .iter()
-                    .copied()
-                    .filter(|&idx| idx < visible_count)
-                    .map(|idx| (idx, &agents[idx])),
-            );
-            // Jump numbers count the drawn agents, so 1-9 keep working on a
-            // filtered list
-            let jump_number = |idx: usize| {
-                matching
-                    .iter()
-                    .filter(|&&m| m < visible_count)
-                    .position(|&m| m == idx)
-                    .map(|pos| pos + 1)
-                    .unwrap_or(0)
-            };
+            let numbered: Vec<usize> = matching
+                .iter()
+                .copied()
+                .filter(|&idx| idx < visible_count)
+                .collect();
             let mut rows = Rows::default();
             let available_width = area.width.saturating_sub(4) as usize;
             // First and last row of the block belonging to the cursor
             let mut cursor_span: Option<(usize, usize)> = None;
 
-            for (session, windows) in tree.sessions.iter() {
-                // Session header
-                let session_line = Line::from(vec![
-                    Span::styled("▼ ", Style::default().fg(Color::Cyan)),
-                    Span::styled(
-                        *session,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]);
-                rows.push(ListItem::new(session_line), None);
+            // Pinned section. It mixes sessions, so each agent names its own.
+            let pinned_numbered = numbered.iter().take_while(|&&idx| idx < pinned_count);
+            let pinned_shown = pinned_numbered.clone().count();
+            if pinned_shown > 0 {
+                let pin_style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD);
+                rows.push(
+                    ListItem::new(Line::from(vec![
+                        Span::styled("★ ", pin_style),
+                        Span::styled(format!("pinned ({})", pinned_shown), pin_style),
+                        Span::styled("  p: unpin", Style::default().fg(Color::Rgb(70, 70, 80))),
+                    ])),
+                    None,
+                );
+            }
 
-                // No window header row: it cost a full line per window. The
-                // window name is shown inline on the agent's info line instead.
-                for ((_window_num, window_name), window_agents) in windows.iter() {
-                    for (original_idx, agent) in window_agents.iter() {
-                        let is_cursor = *original_idx == state.selected_index;
-                        let owner = Some(*original_idx);
-                        let block_start = rows.len();
+            // Jump numbers count the drawn agents, so 1-9 keep working on a
+            // filtered list
+            let mut current_session: Option<&str> = None;
+            for (pos, &idx) in numbered.iter().enumerate() {
+                let agent = &agents[idx];
+                let pinned = idx < pinned_count;
+                let grouped = !pinned && state.sort_mode == SortMode::Session;
 
-                        let cursor_indicator = if is_cursor { "┃ " } else { "  " };
-                        // Continuation marker so the cursor block reads as one unit
-                        let cont_indicator = if is_cursor { "┃" } else { " " };
-                        let detail_prefix = format!("{}{}", cont_indicator, DETAIL_INDENT);
-                        let subagent_prefix = format!("{}{}", cont_indicator, SUBAGENT_INDENT);
-
-                        // Status indicator: the glyph and its color carry the state,
-                        // so no redundant "Idle"/"Working" label is printed.
-                        let (status_char, status_style) = match &agent.status {
-                            AgentStatus::Idle => ("●", Style::default().fg(Color::Gray)),
-                            AgentStatus::Done { .. } => (
-                                "✓",
-                                Style::default()
-                                    .fg(Color::LightBlue)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            AgentStatus::Processing { .. } => {
-                                (state.spinner_frame(), Style::default().fg(Color::Green))
-                            }
-                            AgentStatus::AwaitingApproval { .. } => (
-                                "⚠",
-                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                            ),
-                            AgentStatus::Error { .. } => ("✗", Style::default().fg(Color::Red)),
-                            AgentStatus::Unknown => ("○", Style::default().fg(Color::DarkGray)),
-                        };
-
-                        let type_style = match agent.agent_type {
-                            AgentType::ClaudeCode => Style::default().fg(Color::Magenta),
-                            AgentType::Grok => Style::default().fg(Color::Cyan),
-                            AgentType::OpenCode => Style::default().fg(Color::Blue),
-                            AgentType::CodexCli => Style::default().fg(Color::Green),
-                            AgentType::GeminiCli => Style::default().fg(Color::Yellow),
-                            AgentType::KiroCli => Style::default().fg(Color::LightMagenta),
-                            AgentType::Unknown => Style::default().fg(Color::DarkGray),
-                        };
-
-                        let item_style = if is_cursor {
-                            Style::default().bg(Color::Rgb(50, 50, 70))
-                        } else {
+                if !pinned && pos == pinned_shown && pinned_shown > 0 && !grouped {
+                    // Flat list right under the pinned section: keep them apart
+                    rows.push(ListItem::new(Line::from("")), None);
+                }
+                if grouped && current_session != Some(agent.session.as_str()) {
+                    // Session header (the main list is sorted by session)
+                    current_session = Some(agent.session.as_str());
+                    let session_line = Line::from(vec![
+                        Span::styled("▼ ", Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            agent.session.as_str(),
                             Style::default()
-                        };
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]);
+                    rows.push(ListItem::new(session_line), None);
+                }
 
-                        // Jump number: 1-9 are reachable via digit keys
-                        let number = jump_number(*original_idx);
-                        let number_style = if number <= 9 {
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        };
-
-                        // Main line: number + status + task summary (falls back to path)
-                        let summary = agent
-                            .task_summary()
-                            .unwrap_or_else(|| agent.abbreviated_path());
-                        let line = Line::from(vec![
-                            Span::styled(cursor_indicator, Style::default().fg(Color::White)),
-                            Span::raw(AGENT_INDENT),
-                            Span::styled(format!("{:>2} ", number), number_style),
-                            Span::styled(status_char, status_style),
-                            Span::raw(" "),
-                            Span::styled(summary, Style::default().fg(Color::White)),
-                        ]);
-                        rows.push(ListItem::new(line).style(item_style), owner);
-
-                        // Info line: agent type + window name + context bar
-                        // (the window name stands in for the folder)
-                        let mut info_parts = vec![
-                            Span::styled(
-                                detail_prefix.clone(),
-                                Style::default().fg(Color::DarkGray),
-                            ),
-                            Span::styled(agent.agent_type.short_name(), type_style),
-                            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-                            Span::styled(*window_name, Style::default().fg(Color::Gray)),
-                        ];
-
-                        // Context bar if available (percentage of the window *used*)
-                        if let Some(ctx) = agent.context_used {
-                            let bar_color = if ctx >= 80 {
-                                Color::Red
-                            } else if ctx >= 50 {
-                                Color::Yellow
-                            } else {
-                                Color::Green
-                            };
-                            info_parts
-                                .push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
-                            info_parts.push(Span::styled(
-                                context_bar(ctx),
-                                Style::default().fg(bar_color),
-                            ));
-                        }
-
-                        rows.push(
-                            ListItem::new(Line::from(info_parts)).style(item_style),
-                            owner,
-                        );
-
-                        // Status details
-                        match &agent.status {
-                            AgentStatus::AwaitingApproval {
-                                approval_type,
-                                details,
-                            } => {
-                                let approval_line = Line::from(vec![
-                                    Span::styled(
-                                        detail_prefix.clone(),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                    Span::styled("⚠ ", Style::default().fg(Color::Red)),
-                                    Span::styled(
-                                        format!("{}", approval_type),
-                                        Style::default()
-                                            .fg(Color::Red)
-                                            .add_modifier(Modifier::BOLD),
-                                    ),
-                                ]);
-                                rows.push(ListItem::new(approval_line).style(item_style), owner);
-
-                                if !details.is_empty() {
-                                    let detail_text =
-                                        truncate_str(details, available_width.saturating_sub(11));
-                                    let detail_line = Line::from(vec![
-                                        Span::styled(
-                                            detail_prefix.clone(),
-                                            Style::default().fg(Color::DarkGray),
-                                        ),
-                                        Span::styled("→ ", Style::default().fg(Color::DarkGray)),
-                                        Span::styled(
-                                            detail_text,
-                                            Style::default().fg(Color::White),
-                                        ),
-                                    ]);
-                                    rows.push(ListItem::new(detail_line).style(item_style), owner);
-                                }
-
-                                if let ApprovalType::UserQuestion { choices, .. } = approval_type {
-                                    for (i, choice) in choices.iter().take(4).enumerate() {
-                                        let choice_text = truncate_str(
-                                            choice,
-                                            available_width.saturating_sub(11),
-                                        );
-                                        let choice_line = Line::from(vec![
-                                            Span::styled(
-                                                detail_prefix.clone(),
-                                                Style::default().fg(Color::DarkGray),
-                                            ),
-                                            Span::styled(
-                                                format!("{}. ", i + 1),
-                                                Style::default().fg(Color::Yellow),
-                                            ),
-                                            Span::styled(
-                                                choice_text,
-                                                Style::default().fg(Color::White),
-                                            ),
-                                        ]);
-                                        rows.push(
-                                            ListItem::new(choice_line).style(item_style),
-                                            owner,
-                                        );
-                                    }
-                                    if choices.len() > 4 {
-                                        let more_line = Line::from(vec![
-                                            Span::styled(
-                                                detail_prefix.clone(),
-                                                Style::default().fg(Color::DarkGray),
-                                            ),
-                                            Span::styled(
-                                                format!("...+{} more", choices.len() - 4),
-                                                Style::default().fg(Color::DarkGray),
-                                            ),
-                                        ]);
-                                        rows.push(
-                                            ListItem::new(more_line).style(item_style),
-                                            owner,
-                                        );
-                                    }
-                                }
-                            }
-                            AgentStatus::Processing { activity } => {
-                                // The spinner already lives on the main line, so the
-                                // activity text is printed without a second one.
-                                if !activity.is_empty() {
-                                    let activity_text =
-                                        truncate_str(activity, available_width.saturating_sub(9));
-                                    let activity_line = Line::from(vec![
-                                        Span::styled(
-                                            detail_prefix.clone(),
-                                            Style::default().fg(Color::DarkGray),
-                                        ),
-                                        Span::styled(
-                                            activity_text,
-                                            Style::default().fg(Color::DarkGray),
-                                        ),
-                                    ]);
-                                    rows.push(
-                                        ListItem::new(activity_line).style(item_style),
-                                        owner,
-                                    );
-                                }
-                            }
-                            AgentStatus::Done { finished } => {
-                                let done_text = truncate_str(
-                                    &format!("done {}", finished),
-                                    available_width.saturating_sub(9),
-                                );
-                                let done_line = Line::from(vec![
-                                    Span::styled(
-                                        detail_prefix.clone(),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                    Span::styled(done_text, Style::default().fg(Color::DarkGray)),
-                                ]);
-                                rows.push(ListItem::new(done_line).style(item_style), owner);
-                            }
-                            AgentStatus::Error { message } => {
-                                let error_text =
-                                    truncate_str(message, available_width.saturating_sub(11));
-                                let error_line = Line::from(vec![
-                                    Span::styled(
-                                        detail_prefix.clone(),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                    Span::styled("✗ ", Style::default().fg(Color::Red)),
-                                    Span::styled(error_text, Style::default().fg(Color::Red)),
-                                ]);
-                                rows.push(ListItem::new(error_line).style(item_style), owner);
-                            }
-                            _ => {}
-                        }
-
-                        // Subagents
-                        for subagent in agent.subagents.iter() {
-                            let (sub_char, sub_style) = match subagent.status {
-                                SubagentStatus::Running => {
-                                    (state.spinner_frame(), Style::default().fg(Color::Cyan))
-                                }
-                                SubagentStatus::Completed => {
-                                    ("✓", Style::default().fg(Color::Green))
-                                }
-                                SubagentStatus::Failed => ("✗", Style::default().fg(Color::Red)),
-                                SubagentStatus::Unknown => {
-                                    ("?", Style::default().fg(Color::DarkGray))
-                                }
-                            };
-
-                            let duration = if matches!(subagent.status, SubagentStatus::Running) {
-                                format!(" ({})", subagent.duration_str())
-                            } else {
-                                String::new()
-                            };
-
-                            let sub_line = Line::from(vec![
-                                Span::styled(
-                                    subagent_prefix.clone(),
-                                    Style::default().fg(Color::DarkGray),
-                                ),
-                                Span::styled("↳ ", Style::default().fg(Color::DarkGray)),
-                                Span::styled(sub_char, sub_style),
-                                Span::raw(" "),
-                                Span::styled(
-                                    subagent.subagent_type.display_name(),
-                                    Style::default()
-                                        .fg(Color::White)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(duration, Style::default().fg(Color::Yellow)),
-                            ]);
-                            rows.push(ListItem::new(sub_line).style(item_style), owner);
-
-                            if !subagent.description.is_empty() {
-                                let desc_text = truncate_str(
-                                    &subagent.description,
-                                    available_width.saturating_sub(12),
-                                );
-                                let desc_line = Line::from(vec![
-                                    Span::styled(
-                                        subagent_prefix.clone(),
-                                        Style::default().fg(Color::DarkGray),
-                                    ),
-                                    Span::raw("  "),
-                                    Span::styled(desc_text, Style::default().fg(Color::DarkGray)),
-                                ]);
-                                rows.push(ListItem::new(desc_line).style(item_style), owner);
-                            }
-                        }
-
-                        if is_cursor {
-                            cursor_span = Some((block_start, rows.len()));
-                        }
-                    }
+                let span = push_agent_block(
+                    &mut rows,
+                    state,
+                    idx,
+                    agent,
+                    pos + 1,
+                    !grouped,
+                    available_width,
+                );
+                if idx == state.selected_index {
+                    cursor_span = Some(span);
                 }
             }
 
@@ -593,6 +294,261 @@ impl AgentTreeWidget {
         state.sidebar_follow_cursor = false;
         state.sidebar_row_agents = row_agents;
     }
+}
+
+/// Draws one agent of the pinned or main list: the summary line, the info
+/// line, status details and subagents. `show_session` puts the session name
+/// on the info line, for lists that are not under a session header.
+/// Returns the first and one-past-last row of the block.
+fn push_agent_block<'a>(
+    rows: &mut Rows<'a>,
+    state: &AppState,
+    original_idx: usize,
+    agent: &'a MonitoredAgent,
+    number: usize,
+    show_session: bool,
+    available_width: usize,
+) -> (usize, usize) {
+    let is_cursor = original_idx == state.selected_index;
+    let owner = Some(original_idx);
+    let block_start = rows.len();
+
+    let cursor_indicator = if is_cursor { "┃ " } else { "  " };
+    // Continuation marker so the cursor block reads as one unit
+    let cont_indicator = if is_cursor { "┃" } else { " " };
+    let detail_prefix = format!("{}{}", cont_indicator, DETAIL_INDENT);
+    let subagent_prefix = format!("{}{}", cont_indicator, SUBAGENT_INDENT);
+
+    // Status indicator: the glyph and its color carry the state,
+    // so no redundant "Idle"/"Working" label is printed.
+    let (status_char, status_style) = match &agent.status {
+        AgentStatus::Idle => ("●", Style::default().fg(Color::Gray)),
+        AgentStatus::Done { .. } => (
+            "✓",
+            Style::default()
+                .fg(Color::LightBlue)
+                .add_modifier(Modifier::BOLD),
+        ),
+        AgentStatus::Processing { .. } => {
+            (state.spinner_frame(), Style::default().fg(Color::Green))
+        }
+        AgentStatus::AwaitingApproval { .. } => (
+            "⚠",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+        AgentStatus::Error { .. } => ("✗", Style::default().fg(Color::Red)),
+        AgentStatus::Unknown => ("○", Style::default().fg(Color::DarkGray)),
+    };
+
+    let type_style = match agent.agent_type {
+        AgentType::ClaudeCode => Style::default().fg(Color::Magenta),
+        AgentType::Grok => Style::default().fg(Color::Cyan),
+        AgentType::OpenCode => Style::default().fg(Color::Blue),
+        AgentType::CodexCli => Style::default().fg(Color::Green),
+        AgentType::GeminiCli => Style::default().fg(Color::Yellow),
+        AgentType::KiroCli => Style::default().fg(Color::LightMagenta),
+        AgentType::Unknown => Style::default().fg(Color::DarkGray),
+    };
+
+    let item_style = if is_cursor {
+        Style::default().bg(Color::Rgb(50, 50, 70))
+    } else {
+        Style::default()
+    };
+
+    // Jump number: 1-9 are reachable via digit keys
+    let number_style = if number <= 9 {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    // Main line: number + status + task summary (falls back to path)
+    let summary = agent
+        .task_summary()
+        .unwrap_or_else(|| agent.abbreviated_path());
+    let line = Line::from(vec![
+        Span::styled(cursor_indicator, Style::default().fg(Color::White)),
+        Span::raw(AGENT_INDENT),
+        Span::styled(format!("{:>2} ", number), number_style),
+        Span::styled(status_char, status_style),
+        Span::raw(" "),
+        Span::styled(summary, Style::default().fg(Color::White)),
+    ]);
+    rows.push(ListItem::new(line).style(item_style), owner);
+
+    // Info line: agent type + [session:]window name + context bar
+    // (the window name stands in for the folder)
+    let mut info_parts = vec![
+        Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+        Span::styled(agent.agent_type.short_name(), type_style),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+    ];
+    if show_session {
+        info_parts.push(Span::styled(
+            format!("{}:", agent.session),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    info_parts.push(Span::styled(
+        agent.window_name.as_str(),
+        Style::default().fg(Color::Gray),
+    ));
+
+    // Context bar if available (percentage of the window *used*)
+    if let Some(ctx) = agent.context_used {
+        let bar_color = if ctx >= 80 {
+            Color::Red
+        } else if ctx >= 50 {
+            Color::Yellow
+        } else {
+            Color::Green
+        };
+        info_parts.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+        info_parts.push(Span::styled(
+            context_bar(ctx),
+            Style::default().fg(bar_color),
+        ));
+    }
+
+    rows.push(
+        ListItem::new(Line::from(info_parts)).style(item_style),
+        owner,
+    );
+
+    // Status details
+    match &agent.status {
+        AgentStatus::AwaitingApproval {
+            approval_type,
+            details,
+        } => {
+            let approval_line = Line::from(vec![
+                Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                Span::styled("⚠ ", Style::default().fg(Color::Red)),
+                Span::styled(
+                    format!("{}", approval_type),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            rows.push(ListItem::new(approval_line).style(item_style), owner);
+
+            if !details.is_empty() {
+                let detail_text = truncate_str(details, available_width.saturating_sub(11));
+                let detail_line = Line::from(vec![
+                    Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                    Span::styled("→ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(detail_text, Style::default().fg(Color::White)),
+                ]);
+                rows.push(ListItem::new(detail_line).style(item_style), owner);
+            }
+
+            if let ApprovalType::UserQuestion { choices, .. } = approval_type {
+                for (i, choice) in choices.iter().take(4).enumerate() {
+                    let choice_text = truncate_str(choice, available_width.saturating_sub(11));
+                    let choice_line = Line::from(vec![
+                        Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                        Span::styled(format!("{}. ", i + 1), Style::default().fg(Color::Yellow)),
+                        Span::styled(choice_text, Style::default().fg(Color::White)),
+                    ]);
+                    rows.push(ListItem::new(choice_line).style(item_style), owner);
+                }
+                if choices.len() > 4 {
+                    let more_line = Line::from(vec![
+                        Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                        Span::styled(
+                            format!("...+{} more", choices.len() - 4),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]);
+                    rows.push(ListItem::new(more_line).style(item_style), owner);
+                }
+            }
+        }
+        AgentStatus::Processing { activity } => {
+            // The spinner already lives on the main line, so the
+            // activity text is printed without a second one.
+            if !activity.is_empty() {
+                let activity_text = truncate_str(activity, available_width.saturating_sub(9));
+                let activity_line = Line::from(vec![
+                    Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(activity_text, Style::default().fg(Color::DarkGray)),
+                ]);
+                rows.push(ListItem::new(activity_line).style(item_style), owner);
+            }
+        }
+        AgentStatus::Done { finished } => {
+            let done_text = truncate_str(
+                &format!("done {}", finished),
+                available_width.saturating_sub(9),
+            );
+            let done_line = Line::from(vec![
+                Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                Span::styled(done_text, Style::default().fg(Color::DarkGray)),
+            ]);
+            rows.push(ListItem::new(done_line).style(item_style), owner);
+        }
+        AgentStatus::Error { message } => {
+            let error_text = truncate_str(message, available_width.saturating_sub(11));
+            let error_line = Line::from(vec![
+                Span::styled(detail_prefix.clone(), Style::default().fg(Color::DarkGray)),
+                Span::styled("✗ ", Style::default().fg(Color::Red)),
+                Span::styled(error_text, Style::default().fg(Color::Red)),
+            ]);
+            rows.push(ListItem::new(error_line).style(item_style), owner);
+        }
+        _ => {}
+    }
+
+    // Subagents
+    for subagent in agent.subagents.iter() {
+        let (sub_char, sub_style) = match subagent.status {
+            SubagentStatus::Running => (state.spinner_frame(), Style::default().fg(Color::Cyan)),
+            SubagentStatus::Completed => ("✓", Style::default().fg(Color::Green)),
+            SubagentStatus::Failed => ("✗", Style::default().fg(Color::Red)),
+            SubagentStatus::Unknown => ("?", Style::default().fg(Color::DarkGray)),
+        };
+
+        let duration = if matches!(subagent.status, SubagentStatus::Running) {
+            format!(" ({})", subagent.duration_str())
+        } else {
+            String::new()
+        };
+
+        let sub_line = Line::from(vec![
+            Span::styled(
+                subagent_prefix.clone(),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled("↳ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(sub_char, sub_style),
+            Span::raw(" "),
+            Span::styled(
+                subagent.subagent_type.display_name(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(duration, Style::default().fg(Color::Yellow)),
+        ]);
+        rows.push(ListItem::new(sub_line).style(item_style), owner);
+
+        if !subagent.description.is_empty() {
+            let desc_text = truncate_str(&subagent.description, available_width.saturating_sub(12));
+            let desc_line = Line::from(vec![
+                Span::styled(
+                    subagent_prefix.clone(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("  "),
+                Span::styled(desc_text, Style::default().fg(Color::DarkGray)),
+            ]);
+            rows.push(ListItem::new(desc_line).style(item_style), owner);
+        }
+    }
+
+    (block_start, rows.len())
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {

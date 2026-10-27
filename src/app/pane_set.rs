@@ -1,46 +1,74 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Panes the user has hidden from the main agent list.
+/// A persisted set of tmux panes, keyed by the stable pane id (`%12`).
 ///
-/// Hidden agents are still monitored and still listed, but in a dim section
-/// at the bottom so they stop getting in the way. tmuxcc is a popup that
-/// dies on every jump, so the set is persisted on disk; it is keyed by the
-/// stable pane id (`%12`) because list indices shift as agents come and go.
+/// Used for the panes the user hid (dim section at the bottom of the list)
+/// and the panes the user pinned (section at the top). tmuxcc is a popup that
+/// dies on every jump, so the sets live on disk; pane ids are used because
+/// list indices shift as agents come and go.
 #[derive(Debug, Clone, Default)]
-pub struct HiddenPanes {
+pub struct PaneSet {
     pane_ids: BTreeSet<String>,
     /// Where the set is saved; `None` keeps it in memory only (tests)
     path: Option<PathBuf>,
+    /// Comment written on the first line of the file
+    header: &'static str,
 }
 
-impl HiddenPanes {
+/// Panes hidden in the dim list at the bottom (Space)
+pub type HiddenPanes = PaneSet;
+/// Panes pinned to the top of the list (p)
+pub type PinnedPanes = PaneSet;
+
+/// File name and header of the hidden set
+const HIDDEN: (&str, &str) = (
+    "hidden",
+    "# panes hidden in tmuxcc (space toggles); one pane id per line",
+);
+/// File name and header of the pinned set
+const PINNED: (&str, &str) = (
+    "pinned",
+    "# panes pinned in tmuxcc (p toggles); one pane id per line",
+);
+
+/// tmuxcc's state directory: `$XDG_STATE_HOME/tmuxcc`, falling back to
+/// `~/.local/state/tmuxcc` (the `dirs` crate has no state dir on macOS).
+pub fn state_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("state")))?;
+    Some(base.join("tmuxcc"))
+}
+
+impl PaneSet {
     /// An in-memory set that is never written to disk
     pub fn in_memory() -> Self {
         Self::default()
     }
 
-    /// Default location: `$XDG_STATE_HOME/tmuxcc/hidden`, falling back to
-    /// `~/.local/state/tmuxcc/hidden` (the `dirs` crate has no state dir on macOS).
-    pub fn default_path() -> Option<PathBuf> {
-        let base = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("state")))?;
-        Some(base.join("tmuxcc").join("hidden"))
+    /// Loads the hidden set from `<state dir>/hidden`
+    pub fn load_hidden() -> Self {
+        Self::load_named(HIDDEN)
     }
 
-    /// Loads the set from the default path (an unreadable or missing file is
-    /// simply an empty set)
-    pub fn load() -> Self {
-        match Self::default_path() {
-            Some(path) => Self::load_from(path),
+    /// Loads the pinned set from `<state dir>/pinned`
+    pub fn load_pinned() -> Self {
+        Self::load_named(PINNED)
+    }
+
+    /// Loads a set from the state dir (an unreadable or missing file is simply
+    /// an empty set)
+    fn load_named((name, header): (&str, &'static str)) -> Self {
+        match state_dir() {
+            Some(dir) => Self::load_from(dir.join(name), header),
             None => Self::in_memory(),
         }
     }
 
     /// Loads the set from `path`; one pane id per line
-    pub fn load_from(path: PathBuf) -> Self {
+    pub fn load_from(path: PathBuf, header: &'static str) -> Self {
         let pane_ids = std::fs::read_to_string(&path)
             .map(|content| {
                 content
@@ -54,6 +82,7 @@ impl HiddenPanes {
         Self {
             pane_ids,
             path: Some(path),
+            header,
         }
     }
 
@@ -66,8 +95,11 @@ impl HiddenPanes {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut content =
-            String::from("# panes hidden in tmuxcc (space toggles); one pane id per line\n");
+        let mut content = String::new();
+        if !self.header.is_empty() {
+            content.push_str(self.header);
+            content.push('\n');
+        }
         for id in &self.pane_ids {
             content.push_str(id);
             content.push('\n');
@@ -75,13 +107,13 @@ impl HiddenPanes {
         std::fs::write(path, content)
     }
 
-    /// True when the pane is hidden. An empty id is never hidden.
+    /// True when the pane is in the set. An empty id is never in it.
     pub fn contains(&self, pane_id: &str) -> bool {
         !pane_id.is_empty() && self.pane_ids.contains(pane_id)
     }
 
-    /// Hides a shown pane or shows a hidden one; returns the new hidden state.
-    /// An empty id (pane id unknown) cannot be hidden.
+    /// Adds a pane that is not in the set or removes one that is; returns
+    /// whether it is in the set now. An empty id (pane id unknown) is ignored.
     pub fn toggle(&mut self, pane_id: &str) -> bool {
         if pane_id.is_empty() {
             return false;
@@ -94,10 +126,15 @@ impl HiddenPanes {
         }
     }
 
+    /// Removes a pane; returns whether it was in the set
+    pub fn remove(&mut self, pane_id: &str) -> bool {
+        self.pane_ids.remove(pane_id)
+    }
+
     /// Drops ids whose pane no longer exists on the tmux server.
     ///
     /// Meant for startup with the full pane list: pruning against the agent
-    /// list would un-hide a pane every time its agent restarts.
+    /// list would drop a pane every time its agent restarts.
     pub fn retain_existing<'a>(&mut self, existing: impl IntoIterator<Item = &'a str>) -> bool {
         let existing: BTreeSet<&str> = existing.into_iter().collect();
         let before = self.pane_ids.len();
@@ -125,7 +162,7 @@ mod tests {
 
     #[test]
     fn toggle_and_contains() {
-        let mut hidden = HiddenPanes::in_memory();
+        let mut hidden = PaneSet::in_memory();
         assert!(!hidden.contains("%1"));
         assert!(hidden.toggle("%1"));
         assert!(hidden.contains("%1"));
@@ -135,7 +172,7 @@ mod tests {
 
     #[test]
     fn empty_id_is_never_hidden() {
-        let mut hidden = HiddenPanes::in_memory();
+        let mut hidden = PaneSet::in_memory();
         assert!(!hidden.toggle(""));
         assert!(!hidden.contains(""));
         assert!(hidden.is_empty());
@@ -146,13 +183,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("hidden");
 
-        let mut hidden = HiddenPanes::load_from(path.clone());
+        let mut hidden = PaneSet::load_from(path.clone(), HIDDEN.1);
         assert!(hidden.is_empty());
         hidden.toggle("%12");
         hidden.toggle("%3");
         hidden.save().unwrap();
 
-        let reloaded = HiddenPanes::load_from(path);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with(HIDDEN.1));
+
+        let reloaded = PaneSet::load_from(path, HIDDEN.1);
         assert_eq!(reloaded.len(), 2);
         assert!(reloaded.contains("%12"));
         assert!(reloaded.contains("%3"));
@@ -160,12 +200,21 @@ mod tests {
 
     #[test]
     fn prunes_panes_that_are_gone() {
-        let mut hidden = HiddenPanes::in_memory();
+        let mut hidden = PaneSet::in_memory();
         hidden.toggle("%1");
         hidden.toggle("%2");
         assert!(hidden.retain_existing(["%2", "%9"]));
         assert!(!hidden.contains("%1"));
         assert!(hidden.contains("%2"));
         assert!(!hidden.retain_existing(["%2"]));
+    }
+
+    #[test]
+    fn remove_reports_membership() {
+        let mut pinned = PaneSet::in_memory();
+        pinned.toggle("%4");
+        assert!(pinned.remove("%4"));
+        assert!(!pinned.remove("%4"));
+        assert!(pinned.is_empty());
     }
 }

@@ -47,7 +47,12 @@ pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> 
 
     // Initialize state
     let mut state = AppState::new();
-    state.hidden = crate::app::HiddenPanes::load();
+    state.hidden = crate::app::HiddenPanes::load_hidden();
+    state.pinned = crate::app::PinnedPanes::load_pinned();
+    state.sort_mode_path = crate::app::SortMode::default_path();
+    if let Some(path) = &state.sort_mode_path {
+        state.sort_mode = crate::app::SortMode::load_from(path);
+    }
 
     // Create tmux client and parser registry
     let tmux_client = Arc::new(TmuxClient::with_capture_lines(config.capture_lines));
@@ -58,8 +63,8 @@ pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> 
         state.set_error("tmux is not running".to_string());
     }
 
-    // Forget hidden panes that no longer exist (pruned against *all* panes,
-    // not just agent panes, so a restarting agent stays hidden)
+    // Forget hidden/pinned panes that no longer exist (pruned against *all*
+    // panes, not just agent panes, so a restarting agent keeps its place)
     if let Ok(pane_ids) = tmux_client.list_pane_ids() {
         if state
             .hidden
@@ -67,6 +72,14 @@ pub async fn run_app(config: Config, origin_pane: Option<String>) -> Result<()> 
         {
             if let Err(e) = state.hidden.save() {
                 state.set_error(format!("Failed to save hidden list: {}", e));
+            }
+        }
+        if state
+            .pinned
+            .retain_existing(pane_ids.iter().map(String::as_str))
+        {
+            if let Err(e) = state.pinned.save() {
+                state.set_error(format!("Failed to save pinned list: {}", e));
             }
         }
     }
@@ -293,6 +306,16 @@ async fn run_loop(
                                     state.set_error(e);
                                 }
                             }
+                            Action::TogglePinned => {
+                                if let Err(e) = state.toggle_pinned() {
+                                    state.set_error(e);
+                                }
+                            }
+                            Action::CycleSort => {
+                                if let Err(e) = state.cycle_sort_mode() {
+                                    state.set_error(e);
+                                }
+                            }
                             Action::Approve => {
                                 if let Some(agent) = state.selected_agent() {
                                     if agent.status.needs_attention() {
@@ -497,6 +520,10 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         // Space parks the agent under the cursor in the dim hidden section
         // at the bottom (or brings it back)
         KeyCode::Char(' ') => Action::ToggleHidden,
+        // p pins the agent under the cursor to the top of the list (or unpins)
+        KeyCode::Char('p') if !modifiers.contains(KeyModifiers::CONTROL) => Action::TogglePinned,
+        // o switches the list order: session ↔ attention
+        KeyCode::Char('o') => Action::CycleSort,
 
         // Approval
         KeyCode::Char('y') | KeyCode::Char('Y') => Action::Approve,
