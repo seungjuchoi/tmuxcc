@@ -101,7 +101,7 @@ impl HelpWidget {
                 Span::styled("Pin agent to the top of the list / unpin", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  Space    ", key_style),
+                Span::styled("  h        ", key_style),
                 Span::styled("Hide agent (dim list at the bottom) / unhide", desc_style),
             ]),
             Line::from(vec![
@@ -167,7 +167,7 @@ impl HelpWidget {
             Line::from(vec![Span::styled("General", section_style)]),
             Line::from(vec![]),
             Line::from(vec![
-                Span::styled("  h / ?    ", key_style),
+                Span::styled("  ?        ", key_style),
                 Span::styled("Toggle this help", desc_style),
             ]),
             Line::from(vec![

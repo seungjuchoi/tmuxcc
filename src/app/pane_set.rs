@@ -16,7 +16,7 @@ pub struct PaneSet {
     header: &'static str,
 }
 
-/// Panes hidden in the dim list at the bottom (Space)
+/// Panes hidden in the dim list at the bottom (h)
 pub type HiddenPanes = PaneSet;
 /// Panes pinned to the top of the list (p)
 pub type PinnedPanes = PaneSet;
@@ -24,7 +24,7 @@ pub type PinnedPanes = PaneSet;
 /// File name and header of the hidden set
 const HIDDEN: (&str, &str) = (
     "hidden",
-    "# panes hidden in tmuxcc (space toggles); one pane id per line",
+    "# panes hidden in tmuxcc (h toggles); one pane id per line",
 );
 /// File name and header of the pinned set
 const PINNED: (&str, &str) = (

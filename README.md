@@ -286,7 +286,9 @@ screen does not move.
 
 | Key | Action |
 |-----|--------|
-| `Space` | Toggle selection of current agent |
+| `h` | Hide the current agent in a dim list at the bottom / unhide |
+| `p` | Pin the current agent to the top of the list / unpin |
+| `o` | Order the list by session / by attention (waiting on you first) |
 | `Ctrl+a` | Select all agents |
 | `Esc` | Clear search / close subagent log / quit |
 
@@ -305,7 +307,7 @@ screen does not move.
 |-----|--------|
 | `s` / `S` | Toggle subagent log |
 | `r` | Refresh agent list |
-| `h` / `?` | Show help |
+| `?` | Show help |
 | `q` | Quit |
 
 ---

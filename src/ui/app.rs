@@ -517,9 +517,9 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Right => Action::SidebarWider,
         KeyCode::Left => Action::SidebarNarrower,
 
-        // Space parks the agent under the cursor in the dim hidden section
+        // h parks the agent under the cursor in the dim hidden section
         // at the bottom (or brings it back)
-        KeyCode::Char(' ') => Action::ToggleHidden,
+        KeyCode::Char('h') => Action::ToggleHidden,
         // p pins the agent under the cursor to the top of the list (or unpins)
         KeyCode::Char('p') if !modifiers.contains(KeyModifiers::CONTROL) => Action::TogglePinned,
         // o switches the list order: session ↔ attention
@@ -554,7 +554,7 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Char('<') => Action::SidebarNarrower,
         KeyCode::Char('>') => Action::SidebarWider,
 
-        KeyCode::Char('h') | KeyCode::Char('?') => Action::ShowHelp,
+        KeyCode::Char('?') => Action::ShowHelp,
 
         // Esc clears the search filter first, then closes the subagent log;
         // with nothing to close it quits like 'q'

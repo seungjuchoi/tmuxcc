@@ -184,7 +184,7 @@ impl AgentTreeWidget {
                 }
             }
 
-            // Hidden section: agents the user parked with Space. Dim, one line
+            // Hidden section: agents the user parked with h. Dim, one line
             // each, no jump number — only ⚠ keeps its colour so a pending
             // approval is still noticeable.
             let hidden_matching: Vec<usize> = matching
@@ -202,10 +202,7 @@ impl AgentTreeWidget {
                     ListItem::new(Line::from(vec![
                         Span::styled("▸ ", dim),
                         Span::styled(format!("hidden ({})", hidden_count), dim),
-                        Span::styled(
-                            "  space: unhide",
-                            Style::default().fg(Color::Rgb(70, 70, 80)),
-                        ),
+                        Span::styled("  h: unhide", Style::default().fg(Color::Rgb(70, 70, 80))),
                     ])),
                     None,
                 );

@@ -21,7 +21,7 @@ pub enum Section {
     Pinned,
     /// The regular list
     Main,
-    /// Parked in the dim list at the bottom (Space)
+    /// Parked in the dim list at the bottom (h)
     Hidden,
 }
 
