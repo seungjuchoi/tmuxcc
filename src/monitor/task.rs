@@ -166,9 +166,16 @@ impl MonitorTask {
                 // Parse context used
                 let context_used = parser.parse_context_used(&content);
 
-                // Create monitored agent
+                // Create monitored agent. The id is keyed on the stable `%12`
+                // pane id: closing a pane renumbers the panes after it, which
+                // would change a target-based id and lose the cursor.
+                let id_key = if pane.pane_id.is_empty() {
+                    &target
+                } else {
+                    &pane.pane_id
+                };
                 let mut agent = MonitoredAgent::new(
-                    format!("{}-{}", target, pane.pid),
+                    format!("{}-{}", id_key, pane.pid),
                     target,
                     pane.session.clone(),
                     pane.window,

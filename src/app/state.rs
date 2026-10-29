@@ -624,13 +624,25 @@ impl AppState {
                 .root_agents
                 .sort_by_key(|agent| position(&agent.id));
         }
-        if let Some(id) = cursor_id {
-            if let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) {
-                self.selected_index = index;
-            }
-        }
+        let cursor_found = match cursor_id {
+            Some(id) => match self.agents.root_agents.iter().position(|a| a.id == id) {
+                Some(index) => {
+                    self.selected_index = index;
+                    true
+                }
+                None => false,
+            },
+            None => false,
+        };
         if !same_agents {
-            self.sort_agents();
+            if cursor_found {
+                self.sort_agents();
+            } else {
+                // The cursor's agent is gone. Its index points into the raw
+                // scan order, so following that agent through the sort would
+                // jump; keep the cursor on the same row of the sorted list.
+                self.sort_following(None);
+            }
             return;
         }
 
@@ -679,8 +691,14 @@ impl AppState {
     /// match the screen. The cursor stays on the same agent, and the viewport
     /// follows it if it moved.
     pub fn sort_agents(&mut self) {
-        self.settle_since = None;
         let cursor_id = self.selected_agent().map(|agent| agent.id.clone());
+        self.sort_following(cursor_id);
+    }
+
+    /// Sorts the list and moves the cursor onto `cursor_id`; with `None` the
+    /// cursor keeps its row (clamped)
+    fn sort_following(&mut self, cursor_id: Option<String>) {
+        self.settle_since = None;
         let mut agents = std::mem::take(&mut self.agents.root_agents);
         agents.sort_by(|a, b| self.order_key(a).cmp(&self.order_key(b)));
         self.agents.root_agents = agents;
@@ -983,6 +1001,33 @@ mod tests {
             root_agents: vec![agent("a", "main:0.0", 0, 0, "%1")],
         });
         assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn test_replace_agents_keeps_the_row_when_the_cursor_agent_vanishes() {
+        let mut state = AppState::new();
+        state.pinned.toggle("%3");
+        state.replace_agents(AgentTree {
+            root_agents: vec![
+                agent("a", "main:0.0", 0, 0, "%1"),
+                agent("b", "main:0.1", 0, 1, "%2"),
+                agent("c", "main:0.2", 0, 2, "%3"),
+            ],
+        });
+        // Drawn as c (pinned), a, b
+        state.select_agent(1);
+        assert_eq!(state.selected_agent().map(|a| a.id.as_str()), Some("a"));
+
+        // "a" is closed. The raw scan order is b, c, so index 1 there is "c";
+        // the cursor must stay on row 1 of the drawn list, which is "b"
+        state.replace_agents(AgentTree {
+            root_agents: vec![
+                agent("b", "main:0.0", 0, 0, "%2"),
+                agent("c", "main:0.1", 0, 1, "%3"),
+            ],
+        });
+        assert_eq!(state.selected_index, 1);
+        assert_eq!(state.selected_agent().map(|a| a.id.as_str()), Some("b"));
     }
 
     #[test]
