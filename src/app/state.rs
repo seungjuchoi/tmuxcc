@@ -1,4 +1,4 @@
-use crate::agents::MonitoredAgent;
+use crate::agents::{AgentStatus, MonitoredAgent, SubagentStatus};
 use crate::app::{attention_rank, HiddenPanes, PinnedPanes, Search, SortMode};
 use crate::monitor::SystemStats;
 use std::collections::HashSet;
@@ -53,6 +53,58 @@ pub struct Regions {
     pub sidebar: Region,
     pub preview: Region,
     pub subagent_log: Region,
+}
+
+/// A `D` waiting for its y/n answer: the pane to close and why it was asked
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KillRequest {
+    /// Agent id, to drop it from the list once the pane is gone
+    pub agent_id: String,
+    /// What `tmux kill-pane -t` gets (the stable `%12` when known)
+    pub kill_target: String,
+    /// `session:window.pane`, shown in the dialog
+    pub target: String,
+    /// Agent name and task summary, shown in the dialog
+    pub label: String,
+    /// What is still running in the pane
+    pub reasons: Vec<String>,
+}
+
+/// What would be lost by closing `agent`'s pane right now. Empty means the
+/// agent sits idle and the pane can go without asking.
+///
+/// `shells` is the number of shell commands the agent is running (Claude
+/// Code's foreground and background Bash calls).
+pub fn kill_reasons(agent: &MonitoredAgent, shells: usize) -> Vec<String> {
+    let mut reasons = Vec::new();
+    match &agent.status {
+        AgentStatus::Processing { .. } => reasons.push("agent is working".to_string()),
+        AgentStatus::AwaitingApproval { .. } => {
+            reasons.push("agent is waiting for input".to_string())
+        }
+        AgentStatus::Unknown => reasons.push("agent status is unknown".to_string()),
+        AgentStatus::Idle | AgentStatus::Done { .. } | AgentStatus::Error { .. } => {}
+    }
+    let subagents = agent
+        .subagents
+        .iter()
+        .filter(|s| s.status == SubagentStatus::Running)
+        .count();
+    if subagents > 0 {
+        reasons.push(format!(
+            "{} subagent{} running",
+            subagents,
+            if subagents == 1 { "" } else { "s" }
+        ));
+    }
+    if shells > 0 {
+        reasons.push(format!(
+            "{} shell command{} running",
+            shells,
+            if shells == 1 { "" } else { "s" }
+        ));
+    }
+    reasons
 }
 
 /// Tree structure containing all monitored agents
@@ -138,6 +190,8 @@ pub struct AppState {
     pub search: Search,
     /// Whether help is being shown
     pub show_help: bool,
+    /// Kill confirmation on screen, if any
+    pub pending_kill: Option<KillRequest>,
     /// Whether subagent log is shown
     pub show_subagent_log: bool,
     /// Whether the application should quit
@@ -184,6 +238,7 @@ impl AppState {
             settle_since: None,
             search: Search::default(),
             show_help: false,
+            pending_kill: None,
             show_subagent_log: false,
             should_quit: false,
             last_error: None,
@@ -642,6 +697,23 @@ impl AppState {
         }
     }
 
+    /// Drops an agent whose pane was just closed, without waiting for the
+    /// next scan. The cursor stays on the same row, i.e. the next agent.
+    pub fn remove_agent(&mut self, id: &str) {
+        let Some(index) = self.agents.root_agents.iter().position(|a| a.id == id) else {
+            return;
+        };
+        self.agents.root_agents.remove(index);
+        if index < self.selected_index {
+            self.selected_index -= 1;
+        }
+        if self.selected_index >= self.agents.root_agents.len() {
+            self.selected_index = self.agents.root_agents.len().saturating_sub(1);
+        }
+        self.preview_scroll = 0;
+        self.sidebar_follow_cursor = true;
+    }
+
     /// Toggles help display
     pub fn toggle_help(&mut self) {
         self.show_help = !self.show_help;
@@ -761,6 +833,66 @@ mod tests {
         );
         agent.pane_id = pane_id.to_string();
         agent
+    }
+
+    #[test]
+    fn test_kill_reasons() {
+        use crate::agents::{ApprovalType, Subagent, SubagentType};
+
+        let mut a = agent("a", "main:0.0", 0, 0, "%1");
+        a.status = AgentStatus::Idle;
+        assert!(kill_reasons(&a, 0).is_empty());
+
+        a.status = AgentStatus::Done {
+            finished: "1m".to_string(),
+        };
+        assert!(kill_reasons(&a, 0).is_empty());
+        assert_eq!(kill_reasons(&a, 2).len(), 1);
+        assert!(kill_reasons(&a, 2)[0].starts_with("2 shell commands"));
+
+        a.status = AgentStatus::Processing {
+            activity: String::new(),
+        };
+        assert_eq!(kill_reasons(&a, 0), vec!["agent is working".to_string()]);
+
+        a.status = AgentStatus::AwaitingApproval {
+            approval_type: ApprovalType::ShellCommand,
+            details: String::new(),
+        };
+        a.subagents.push(Subagent::new(
+            "s1".to_string(),
+            SubagentType::Explore,
+            String::new(),
+        ));
+        assert_eq!(
+            kill_reasons(&a, 1),
+            vec![
+                "agent is waiting for input".to_string(),
+                "1 subagent running".to_string(),
+                "1 shell command running".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_remove_agent_keeps_cursor_row() {
+        let mut state = AppState::new();
+        for (id, pane) in [("a", 0), ("b", 1), ("c", 2)] {
+            state.agents.root_agents.push(agent(
+                id,
+                &format!("main:0.{}", pane),
+                0,
+                pane,
+                &format!("%{}", pane),
+            ));
+        }
+        state.selected_index = 1;
+        state.remove_agent("b");
+        assert_eq!(state.selected_agent().unwrap().id, "c");
+        state.remove_agent("c");
+        assert_eq!(state.selected_agent().unwrap().id, "a");
+        state.remove_agent("missing");
+        assert_eq!(state.agents.root_agents.len(), 1);
     }
 
     #[test]

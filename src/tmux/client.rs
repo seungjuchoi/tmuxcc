@@ -225,6 +225,21 @@ impl TmuxClient {
         Ok(())
     }
 
+    /// Closes a pane, ending whatever runs in it
+    pub fn kill_pane(&self, target: &str) -> Result<()> {
+        let output = Command::new("tmux")
+            .args(["kill-pane", "-t", target])
+            .output()
+            .context("Failed to execute tmux kill-pane")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("tmux kill-pane failed for {}: {}", target, stderr);
+        }
+
+        Ok(())
+    }
+
     /// Focuses on a pane: selects its window/pane, then switches the client
     /// to its session so cross-session jumps land where expected.
     pub fn focus_pane(&self, target: &str) -> Result<()> {

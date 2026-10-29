@@ -21,6 +21,12 @@ pub enum Action {
     ApproveAll,
     /// Jump to the selected tmux pane and quit
     JumpToPane,
+    /// Close the current agent's pane (asks first when something is running)
+    KillPane,
+    /// Answer yes to the pending kill confirmation
+    ConfirmKill,
+    /// Answer no to the pending kill confirmation
+    CancelKill,
     /// Toggle subagent log view
     ToggleSubagentLog,
     /// Refresh agent list
@@ -81,6 +87,9 @@ impl Action {
             Action::Reject => "Reject pending request",
             Action::ApproveAll => "Approve all pending requests",
             Action::JumpToPane => "Jump to selected pane and quit",
+            Action::KillPane => "Close agent and its pane",
+            Action::ConfirmKill => "Confirm closing the pane",
+            Action::CancelKill => "Keep the pane",
             Action::ToggleSubagentLog => "Toggle subagent log",
             Action::Refresh => "Refresh agent list",
             Action::ShowHelp => "Show help",

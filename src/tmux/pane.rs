@@ -175,6 +175,27 @@ pub fn descendant_pids(pid: u32) -> Vec<u32> {
     get_process_cache().lock().get_descendant_pids(pid, 6)
 }
 
+/// Number of shell commands Claude Code is running below `pid` right now,
+/// foreground or background.
+///
+/// Claude Code runs every Bash tool call as `zsh -c source
+/// ~/.claude/shell-snapshots/...`, which tells them apart from its long-lived
+/// MCP server children. Reads a fresh process list: the answer decides
+/// whether killing the pane needs a confirmation.
+pub fn running_shell_count(pid: u32) -> usize {
+    let mut cache = get_process_cache().lock();
+    cache.refresh();
+    cache
+        .get_descendant_pids(pid, 6)
+        .into_iter()
+        .filter(|p| {
+            cache
+                .get_cmdline(*p)
+                .is_some_and(|cmd| cmd.contains("/.claude/shell-snapshots/"))
+        })
+        .count()
+}
+
 /// Represents a tmux pane with its identifying information
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneInfo {

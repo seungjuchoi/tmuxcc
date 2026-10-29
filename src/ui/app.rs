@@ -14,13 +14,15 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 
-use crate::app::{Action, AppState, Config, Region, Regions};
+use crate::agents::AgentType;
+use crate::app::{kill_reasons, Action, AppState, Config, KillRequest, Region, Regions};
 use crate::monitor::{MonitorTask, SystemStatsCollector};
 use crate::parsers::ParserRegistry;
-use crate::tmux::TmuxClient;
+use crate::tmux::{running_shell_count, TmuxClient};
 
 use super::components::{
-    AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, PanePreviewWidget, SubagentLogWidget,
+    AgentTreeWidget, FooterWidget, HeaderWidget, HelpWidget, KillConfirmWidget, PanePreviewWidget,
+    SubagentLogWidget,
 };
 use super::Layout;
 
@@ -204,6 +206,11 @@ async fn run_loop(
             if state.show_help {
                 HelpWidget::render(frame, size);
             }
+
+            // Kill confirmation
+            if let Some(request) = &state.pending_kill {
+                KillConfirmWidget::render(frame, size, request);
+            }
         })?;
 
         // Handle events with short timeout for responsive UI (~60fps)
@@ -364,6 +371,42 @@ async fn run_loop(
                                     }
                                 }
                             }
+                            Action::KillPane => {
+                                if let Some(agent) = state.selected_agent() {
+                                    let shells = if agent.agent_type == AgentType::ClaudeCode {
+                                        running_shell_count(agent.pid)
+                                    } else {
+                                        0
+                                    };
+                                    let request = KillRequest {
+                                        agent_id: agent.id.clone(),
+                                        kill_target: if agent.pane_id.is_empty() {
+                                            agent.target.clone()
+                                        } else {
+                                            agent.pane_id.clone()
+                                        },
+                                        target: agent.target.clone(),
+                                        label: match agent.task_summary() {
+                                            Some(task) => format!("{} · {}", agent.agent_type, task),
+                                            None => agent.agent_type.to_string(),
+                                        },
+                                        reasons: kill_reasons(agent, shells),
+                                    };
+                                    if request.reasons.is_empty() {
+                                        kill_pane(state, tmux_client, request);
+                                    } else {
+                                        state.pending_kill = Some(request);
+                                    }
+                                }
+                            }
+                            Action::ConfirmKill => {
+                                if let Some(request) = state.pending_kill.take() {
+                                    kill_pane(state, tmux_client, request);
+                                }
+                            }
+                            Action::CancelKill => {
+                                state.pending_kill = None;
+                            }
                             Action::ToggleSubagentLog => {
                                 state.toggle_subagent_log();
                             }
@@ -442,6 +485,14 @@ async fn run_loop(
     Ok(())
 }
 
+/// Closes the request's pane and drops its agent from the list right away
+fn kill_pane(state: &mut AppState, tmux_client: &TmuxClient, request: KillRequest) {
+    match tmux_client.kill_pane(&request.kill_target) {
+        Ok(()) => state.remove_agent(&request.agent_id),
+        Err(e) => state.set_error(format!("Failed to close {}: {}", request.target, e)),
+    }
+}
+
 /// Records a layout rectangle for later mouse hit-testing
 fn region(rect: ratatui::layout::Rect) -> Region {
     Region {
@@ -462,6 +513,18 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
     // If help is shown, any key closes it
     if state.show_help {
         return Action::HideHelp;
+    }
+
+    // The kill confirmation takes y/n and nothing else
+    if state.pending_kill.is_some() {
+        return match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => Action::ConfirmKill,
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Action::CancelKill,
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') | KeyCode::Esc => {
+                Action::CancelKill
+            }
+            _ => Action::None,
+        };
     }
 
     // Search input open: printable keys go into the query. The cursor can
@@ -546,6 +609,7 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         // Enter jumps to the selected pane and closes tmuxcc
         KeyCode::Enter => Action::JumpToPane,
+        KeyCode::Char('D') => Action::KillPane,
 
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('r') => Action::Refresh,

@@ -131,6 +131,17 @@ impl HelpWidget {
                 Span::styled("Approve all pending requests", desc_style),
             ]),
             Line::from(vec![
+                Span::styled("  D        ", key_style),
+                Span::styled("Close agent and its pane", desc_style),
+            ]),
+            Line::from(vec![
+                Span::styled("           ", key_style),
+                Span::styled(
+                    "asks y/n first if it is working, waiting or running shells",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            Line::from(vec![
                 Span::styled("  ← / →    ", key_style),
                 Span::styled("Narrow / widen the sidebar (also < >)", desc_style),
             ]),
