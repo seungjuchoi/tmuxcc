@@ -79,7 +79,7 @@ impl HelpWidget {
             ]),
             Line::from(vec![
                 Span::styled("  PgDn/PgUp", key_style),
-                Span::styled("Scroll preview half a screen (Ctrl+d/u)", desc_style),
+                Span::styled("Scroll preview half a screen", desc_style),
             ]),
             Line::from(vec![
                 Span::styled("  G / g    ", key_style),
@@ -131,7 +131,7 @@ impl HelpWidget {
                 Span::styled("Approve all pending requests", desc_style),
             ]),
             Line::from(vec![
-                Span::styled("  D        ", key_style),
+                Span::styled("  D / ^d   ", key_style),
                 Span::styled("Close agent and its pane", desc_style),
             ]),
             Line::from(vec![

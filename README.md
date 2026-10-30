@@ -237,6 +237,7 @@ tmuxcc --init-config
 | `Tab` | Cycle through agents |
 | `1`-`9` | Jump cursor to agent number |
 | `Enter` | Go to selected pane (closes tmuxcc) |
+| `D` / `Ctrl+d` | Close the agent's pane (asks y/n while work is still running); `Ctrl+d` also works with a Korean IME on |
 
 ### Search
 
@@ -265,7 +266,6 @@ Scroll depth is limited by `--capture-lines` (100 by default).
 | `J` / `K` (`Shift`+`j`/`k`) | Scroll preview down / up one row |
 | `Shift`+`Down` / `Shift`+`Up` | Scroll preview down / up one row |
 | `PageDown` / `PageUp` | Scroll preview half a screen |
-| `Ctrl+d` / `Ctrl+u` | Scroll preview half a screen |
 | `G` | Jump back to live output |
 | `g` | Jump to the oldest captured output |
 

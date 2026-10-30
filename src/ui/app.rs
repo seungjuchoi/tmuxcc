@@ -565,10 +565,6 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
         KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => Action::PreviewScrollBack(1),
         KeyCode::PageDown => Action::PreviewPageForward,
         KeyCode::PageUp => Action::PreviewPageBack,
-        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-            Action::PreviewPageForward
-        }
-        KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => Action::PreviewPageBack,
         KeyCode::Char('G') => Action::PreviewToBottom,
         KeyCode::Char('g') => Action::PreviewToTop,
 
@@ -609,7 +605,10 @@ fn map_key_to_action(code: KeyCode, modifiers: KeyModifiers, state: &AppState) -
 
         // Enter jumps to the selected pane and closes tmuxcc
         KeyCode::Enter => Action::JumpToPane,
+        // Ctrl+d closes too: Ctrl combinations get past a Korean IME, which
+        // holds a bare D (ㅇ) as an unfinished syllable
         KeyCode::Char('D') => Action::KillPane,
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => Action::KillPane,
 
         KeyCode::Char('s') | KeyCode::Char('S') => Action::ToggleSubagentLog,
         KeyCode::Char('r') => Action::Refresh,
